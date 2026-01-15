@@ -1,65 +1,187 @@
-import Image from "next/image";
+'use client'
 
-export default function Home() {
+import { Header } from '@/components/layout/header'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import {
+  Building2,
+  FileSpreadsheet,
+  Package,
+  ClipboardCheck,
+  TrendingUp,
+  AlertCircle,
+} from 'lucide-react'
+import Link from 'next/link'
+
+// Placeholder stats - will be replaced with real data
+const stats = [
+  {
+    title: 'Active Sites',
+    value: '0',
+    description: 'Currently in progress',
+    icon: Building2,
+    href: '/sites',
+  },
+  {
+    title: 'BOQ Items',
+    value: '0',
+    description: 'Total line items',
+    icon: FileSpreadsheet,
+    href: '/boq',
+  },
+  {
+    title: 'Materials Tracked',
+    value: '0',
+    description: 'Across all projects',
+    icon: Package,
+    href: '/materials',
+  },
+  {
+    title: 'Pending Compliance',
+    value: '0',
+    description: 'Documents to upload',
+    icon: ClipboardCheck,
+    href: '/compliance',
+  },
+]
+
+export default function DashboardPage() {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <div className="flex flex-col min-h-screen">
+      <Header title="Dashboard" />
+
+      <div className="flex-1 p-4 md:p-6 space-y-6">
+        {/* Welcome Message */}
+        <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-xl p-6 text-white">
+          <h2 className="text-2xl font-bold mb-2">Welcome to BOQ Manager</h2>
+          <p className="text-blue-100">
+            Manage your construction projects from BOQ to Payment - all in one place.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        {/* Stats Grid */}
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {stats.map((stat) => (
+            <Link key={stat.title} href={stat.href}>
+              <Card className="hover:shadow-md transition-shadow cursor-pointer">
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm font-medium text-slate-600">
+                    {stat.title}
+                  </CardTitle>
+                  <stat.icon className="h-5 w-5 text-slate-400" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">{stat.value}</div>
+                  <p className="text-xs text-slate-500 mt-1">{stat.description}</p>
+                </CardContent>
+              </Card>
+            </Link>
+          ))}
         </div>
-      </main>
+
+        {/* Quick Actions & Recent Activity */}
+        <div className="grid gap-6 lg:grid-cols-2">
+          {/* Quick Actions */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <TrendingUp className="h-5 w-5" />
+                Quick Actions
+              </CardTitle>
+              <CardDescription>Common tasks to get started</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Link
+                href="/sites/new"
+                className="flex items-center gap-3 p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors"
+              >
+                <div className="h-10 w-10 rounded-lg bg-blue-100 flex items-center justify-center">
+                  <Building2 className="h-5 w-5 text-blue-600" />
+                </div>
+                <div>
+                  <p className="font-medium">Create New Site</p>
+                  <p className="text-sm text-slate-500">Start a new project</p>
+                </div>
+              </Link>
+              <Link
+                href="/boq/upload"
+                className="flex items-center gap-3 p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors"
+              >
+                <div className="h-10 w-10 rounded-lg bg-green-100 flex items-center justify-center">
+                  <FileSpreadsheet className="h-5 w-5 text-green-600" />
+                </div>
+                <div>
+                  <p className="font-medium">Upload BOQ</p>
+                  <p className="text-sm text-slate-500">Import from Excel</p>
+                </div>
+              </Link>
+              <Link
+                href="/materials"
+                className="flex items-center gap-3 p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors"
+              >
+                <div className="h-10 w-10 rounded-lg bg-orange-100 flex items-center justify-center">
+                  <Package className="h-5 w-5 text-orange-600" />
+                </div>
+                <div>
+                  <p className="font-medium">Track Materials</p>
+                  <p className="text-sm text-slate-500">Log material receipts</p>
+                </div>
+              </Link>
+            </CardContent>
+          </Card>
+
+          {/* Getting Started */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <AlertCircle className="h-5 w-5" />
+                Getting Started
+              </CardTitle>
+              <CardDescription>Follow these steps to set up your project</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ol className="space-y-4">
+                <li className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">1</Badge>
+                  <div>
+                    <p className="font-medium">Create a Site</p>
+                    <p className="text-sm text-slate-500">
+                      Add your project site (e.g., TCS-Vizag)
+                    </p>
+                  </div>
+                </li>
+                <li className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">2</Badge>
+                  <div>
+                    <p className="font-medium">Add Packages</p>
+                    <p className="text-sm text-slate-500">
+                      Create work packages (LA-Civil, LA-Plumbing, etc.)
+                    </p>
+                  </div>
+                </li>
+                <li className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">3</Badge>
+                  <div>
+                    <p className="font-medium">Upload BOQ</p>
+                    <p className="text-sm text-slate-500">
+                      Import your BOQ from Excel or enter manually
+                    </p>
+                  </div>
+                </li>
+                <li className="flex items-start gap-3">
+                  <Badge variant="outline" className="mt-0.5">4</Badge>
+                  <div>
+                    <p className="font-medium">Track & Manage</p>
+                    <p className="text-sm text-slate-500">
+                      Add materials, compliance docs, and track progress
+                    </p>
+                  </div>
+                </li>
+              </ol>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
     </div>
-  );
+  )
 }
