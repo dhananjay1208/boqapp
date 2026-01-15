@@ -28,6 +28,7 @@ import {
   XCircle,
   MinusCircle,
   Filter,
+  Eye,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
@@ -62,9 +63,13 @@ interface MIRData {
   quantity: number
   unit: string
   dc_status: 'Y' | 'N' | 'NA'
+  dc_file_path: string | null
   mir_status: 'Y' | 'N' | 'NA'
+  mir_file_path: string | null
   test_cert_status: 'Y' | 'N' | 'NA'
+  test_cert_file_path: string | null
   tds_status: 'Y' | 'N' | 'NA'
+  tds_file_path: string | null
 }
 
 export default function MIRViewPage() {
@@ -219,13 +224,21 @@ export default function MIRViewPage() {
         const materialReceipts = (receipts || []).filter(r => r.material_id === material.id)
         const materialCompliance = (complianceDocs || []).filter(c => c.material_id === material.id)
 
-        // Get compliance status
-        const getComplianceStatus = (docType: string): 'Y' | 'N' | 'NA' => {
+        // Get compliance status and file path
+        const getComplianceInfo = (docType: string): { status: 'Y' | 'N' | 'NA', filePath: string | null } => {
           const doc = materialCompliance.find(c => c.document_type === docType)
-          if (!doc) return 'N'
-          if (!doc.is_applicable) return 'NA'
-          return doc.is_uploaded ? 'Y' : 'N'
+          if (!doc) return { status: 'N', filePath: null }
+          if (!doc.is_applicable) return { status: 'NA', filePath: null }
+          return {
+            status: doc.is_uploaded ? 'Y' : 'N',
+            filePath: doc.is_uploaded ? doc.file_path : null
+          }
         }
+
+        const dcInfo = getComplianceInfo('dc')
+        const mirInfo = getComplianceInfo('mir')
+        const testCertInfo = getComplianceInfo('test_certificate')
+        const tdsInfo = getComplianceInfo('tds')
 
         if (materialReceipts.length > 0) {
           // Add a row for each receipt
@@ -239,10 +252,14 @@ export default function MIRViewPage() {
               material_id: material.id,
               quantity: receipt.quantity_received,
               unit: material.unit,
-              dc_status: getComplianceStatus('dc'),
-              mir_status: getComplianceStatus('mir'),
-              test_cert_status: getComplianceStatus('test_certificate'),
-              tds_status: getComplianceStatus('tds'),
+              dc_status: dcInfo.status,
+              dc_file_path: dcInfo.filePath,
+              mir_status: mirInfo.status,
+              mir_file_path: mirInfo.filePath,
+              test_cert_status: testCertInfo.status,
+              test_cert_file_path: testCertInfo.filePath,
+              tds_status: tdsInfo.status,
+              tds_file_path: tdsInfo.filePath,
             })
           })
         } else {
@@ -256,10 +273,14 @@ export default function MIRViewPage() {
             material_id: material.id,
             quantity: 0,
             unit: material.unit,
-            dc_status: getComplianceStatus('dc'),
-            mir_status: getComplianceStatus('mir'),
-            test_cert_status: getComplianceStatus('test_certificate'),
-            tds_status: getComplianceStatus('tds'),
+            dc_status: dcInfo.status,
+            dc_file_path: dcInfo.filePath,
+            mir_status: mirInfo.status,
+            mir_file_path: mirInfo.filePath,
+            test_cert_status: testCertInfo.status,
+            test_cert_file_path: testCertInfo.filePath,
+            tds_status: tdsInfo.status,
+            tds_file_path: tdsInfo.filePath,
           })
         }
       })
@@ -280,14 +301,43 @@ export default function MIRViewPage() {
     }
   }
 
-  function getStatusBadge(status: 'Y' | 'N' | 'NA') {
+  async function viewDocument(filePath: string) {
+    try {
+      const { data, error } = await supabase.storage
+        .from('compliance-docs')
+        .createSignedUrl(filePath, 3600)
+
+      if (error) {
+        toast.error('Failed to generate download link')
+        return
+      }
+
+      window.open(data.signedUrl, '_blank')
+    } catch (error) {
+      console.error('Error viewing document:', error)
+      toast.error('Failed to view document')
+    }
+  }
+
+  function getStatusBadge(status: 'Y' | 'N' | 'NA', filePath?: string | null) {
     switch (status) {
       case 'Y':
         return (
-          <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
-            <CheckCircle2 className="h-3 w-3 mr-1" />
-            Y
-          </Badge>
+          <div className="flex items-center gap-1">
+            <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
+              <CheckCircle2 className="h-3 w-3 mr-1" />
+              Y
+            </Badge>
+            {filePath && (
+              <button
+                onClick={() => viewDocument(filePath)}
+                className="p-1 rounded hover:bg-slate-100 text-blue-600 hover:text-blue-800"
+                title="View document"
+              >
+                <Eye className="h-4 w-4" />
+              </button>
+            )}
+          </div>
         )
       case 'N':
         return (
@@ -524,10 +574,10 @@ export default function MIRViewPage() {
                         {row.quantity > 0 ? row.quantity : '-'}
                       </TableCell>
                       <TableCell>{row.unit}</TableCell>
-                      <TableCell className="text-center">{getStatusBadge(row.dc_status)}</TableCell>
-                      <TableCell className="text-center">{getStatusBadge(row.mir_status)}</TableCell>
-                      <TableCell className="text-center">{getStatusBadge(row.test_cert_status)}</TableCell>
-                      <TableCell className="text-center">{getStatusBadge(row.tds_status)}</TableCell>
+                      <TableCell className="text-center">{getStatusBadge(row.dc_status, row.dc_file_path)}</TableCell>
+                      <TableCell className="text-center">{getStatusBadge(row.mir_status, row.mir_file_path)}</TableCell>
+                      <TableCell className="text-center">{getStatusBadge(row.test_cert_status, row.test_cert_file_path)}</TableCell>
+                      <TableCell className="text-center">{getStatusBadge(row.tds_status, row.tds_file_path)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
