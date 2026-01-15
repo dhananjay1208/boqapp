@@ -13,19 +13,32 @@ CHECK (document_type IN ('dc', 'mir', 'test_certificate', 'tds'));
 UPDATE compliance_documents SET document_type = 'dc'
 WHERE document_type IN ('delivery_challan', 'eway_bill', 'invoice');
 
--- Create storage bucket for compliance documents
--- Run this in Supabase Dashboard > Storage or via SQL:
--- INSERT INTO storage.buckets (id, name, public) VALUES ('compliance-docs', 'compliance-docs', false);
+-- =====================================================
+-- STORAGE BUCKET SETUP (Run in Supabase SQL Editor)
+-- =====================================================
 
--- Storage policy to allow authenticated uploads (for now, allow all)
--- Run in Supabase Dashboard > Storage > Policies or via SQL:
-/*
-CREATE POLICY "Allow public uploads to compliance-docs" ON storage.objects
-FOR INSERT WITH CHECK (bucket_id = 'compliance-docs');
+-- Step 1: Create the storage bucket (if not already created via Dashboard)
+-- INSERT INTO storage.buckets (id, name, public) VALUES ('compliance-docs', 'compliance-docs', true);
 
-CREATE POLICY "Allow public reads from compliance-docs" ON storage.objects
-FOR SELECT USING (bucket_id = 'compliance-docs');
+-- Step 2: Add RLS policies for the storage bucket
+-- IMPORTANT: Run these policies in Supabase SQL Editor
 
-CREATE POLICY "Allow public deletes from compliance-docs" ON storage.objects
-FOR DELETE USING (bucket_id = 'compliance-docs');
-*/
+-- Allow anyone to upload files
+CREATE POLICY "Allow public uploads" ON storage.objects
+FOR INSERT TO anon, authenticated
+WITH CHECK (bucket_id = 'compliance-docs');
+
+-- Allow anyone to read/download files
+CREATE POLICY "Allow public reads" ON storage.objects
+FOR SELECT TO anon, authenticated
+USING (bucket_id = 'compliance-docs');
+
+-- Allow anyone to update files
+CREATE POLICY "Allow public updates" ON storage.objects
+FOR UPDATE TO anon, authenticated
+USING (bucket_id = 'compliance-docs');
+
+-- Allow anyone to delete files
+CREATE POLICY "Allow public deletes" ON storage.objects
+FOR DELETE TO anon, authenticated
+USING (bucket_id = 'compliance-docs');

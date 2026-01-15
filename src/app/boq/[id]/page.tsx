@@ -916,6 +916,24 @@ export default function BOQDetailPage() {
 
       if (error) throw error
       toast.success(doc.is_applicable ? 'Marked as Not Applicable' : 'Marked as Required')
+
+      // Update the selected material's compliance docs in state immediately
+      if (selectedMaterialForCompliance) {
+        const updatedDocs = selectedMaterialForCompliance.compliance_docs.map(d =>
+          d.id === doc.id
+            ? {
+                ...d,
+                is_applicable: !doc.is_applicable,
+                ...(doc.is_applicable && { file_path: null, file_name: null, is_uploaded: false, uploaded_at: null })
+              }
+            : d
+        )
+        setSelectedMaterialForCompliance({
+          ...selectedMaterialForCompliance,
+          compliance_docs: updatedDocs
+        })
+      }
+
       fetchData()
     } catch (error) {
       console.error('Error updating document:', error)
@@ -931,23 +949,28 @@ export default function BOQDetailPage() {
       const fileExt = file.name.split('.').pop()
       const fileName = `${materialId}/${docType}_${Date.now()}.${fileExt}`
 
-      const { error: uploadError } = await supabase.storage
+      const { data: uploadData, error: uploadError } = await supabase.storage
         .from('compliance-docs')
-        .upload(fileName, file)
+        .upload(fileName, file, {
+          cacheControl: '3600',
+          upsert: true
+        })
 
       if (uploadError) {
-        // If bucket doesn't exist, show a helpful message
+        console.error('Upload error details:', uploadError)
+        // Show the actual error message for debugging
         if (uploadError.message.includes('bucket') || uploadError.message.includes('not found')) {
           toast.error('Storage bucket not configured. Please create "compliance-docs" bucket in Supabase.')
-          return
+        } else if (uploadError.message.includes('policy') || uploadError.message.includes('permission') || uploadError.message.includes('security')) {
+          toast.error('Storage policy error. Please enable public access or add RLS policies for the bucket.')
+        } else {
+          toast.error(`Upload failed: ${uploadError.message}`)
         }
-        throw uploadError
+        return
       }
 
-      // Get public URL
-      const { data: urlData } = supabase.storage
-        .from('compliance-docs')
-        .getPublicUrl(fileName)
+      // Store just the file path - we'll generate signed URLs when viewing
+      const filePath = fileName
 
       // Update or create compliance document record
       const { data: existingDoc } = await supabase
@@ -961,7 +984,7 @@ export default function BOQDetailPage() {
         const { error } = await supabase
           .from('compliance_documents')
           .update({
-            file_path: urlData.publicUrl,
+            file_path: filePath,
             file_name: file.name,
             is_uploaded: true,
             uploaded_at: new Date().toISOString(),
@@ -975,7 +998,7 @@ export default function BOQDetailPage() {
           .insert({
             material_id: materialId,
             document_type: docType,
-            file_path: urlData.publicUrl,
+            file_path: filePath,
             file_name: file.name,
             is_applicable: true,
             is_uploaded: true,
@@ -986,10 +1009,30 @@ export default function BOQDetailPage() {
       }
 
       toast.success('Document uploaded successfully')
+
+      // Update the selected material's compliance docs in state immediately
+      if (selectedMaterialForCompliance) {
+        const updatedDocs = selectedMaterialForCompliance.compliance_docs.map(d =>
+          d.document_type === docType
+            ? {
+                ...d,
+                file_path: filePath,
+                file_name: file.name,
+                is_uploaded: true,
+                uploaded_at: new Date().toISOString()
+              }
+            : d
+        )
+        setSelectedMaterialForCompliance({
+          ...selectedMaterialForCompliance,
+          compliance_docs: updatedDocs
+        })
+      }
+
       fetchData()
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error uploading file:', error)
-      toast.error('Failed to upload document')
+      toast.error(error?.message || 'Failed to upload document')
     } finally {
       setUploadingDoc(null)
     }
@@ -1001,10 +1044,7 @@ export default function BOQDetailPage() {
     try {
       // Delete file from storage if it exists
       if (doc.file_path) {
-        const filePath = doc.file_path.split('/compliance-docs/')[1]
-        if (filePath) {
-          await supabase.storage.from('compliance-docs').remove([filePath])
-        }
+        await supabase.storage.from('compliance-docs').remove([doc.file_path])
       }
 
       // Update the document record
@@ -1020,6 +1060,20 @@ export default function BOQDetailPage() {
 
       if (error) throw error
       toast.success('Document deleted')
+
+      // Update the selected material's compliance docs in state immediately
+      if (selectedMaterialForCompliance) {
+        const updatedDocs = selectedMaterialForCompliance.compliance_docs.map(d =>
+          d.id === doc.id
+            ? { ...d, file_path: null, file_name: null, is_uploaded: false, uploaded_at: null }
+            : d
+        )
+        setSelectedMaterialForCompliance({
+          ...selectedMaterialForCompliance,
+          compliance_docs: updatedDocs
+        })
+      }
+
       fetchData()
     } catch (error) {
       console.error('Error deleting document:', error)
@@ -1040,6 +1094,32 @@ export default function BOQDetailPage() {
       completed: uploaded.length,
       na: na.length,
       pending: applicable.length - uploaded.length
+    }
+  }
+
+  async function viewDocument(doc: ComplianceDocument) {
+    if (!doc.file_path) {
+      toast.error('No file available')
+      return
+    }
+
+    try {
+      // Generate a signed URL that expires in 1 hour
+      const { data, error } = await supabase.storage
+        .from('compliance-docs')
+        .createSignedUrl(doc.file_path, 3600) // 1 hour expiry
+
+      if (error) {
+        console.error('Error generating signed URL:', error)
+        toast.error('Failed to generate download link')
+        return
+      }
+
+      // Open the signed URL in a new tab
+      window.open(data.signedUrl, '_blank')
+    } catch (error) {
+      console.error('Error viewing document:', error)
+      toast.error('Failed to open document')
     }
   }
 
@@ -1998,7 +2078,7 @@ export default function BOQDetailPage() {
 
       {/* Compliance Documents Dialog */}
       <Dialog open={complianceDialogOpen} onOpenChange={setComplianceDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileText className="h-5 w-5" />
@@ -2011,7 +2091,7 @@ export default function BOQDetailPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-4">
+          <div className="space-y-2 py-2 overflow-y-auto flex-1">
             {COMPLIANCE_DOC_TYPES.map((docType) => {
               const doc = selectedMaterialForCompliance?.compliance_docs.find(
                 d => d.document_type === docType.value
@@ -2022,74 +2102,102 @@ export default function BOQDetailPage() {
               return (
                 <div
                   key={docType.value}
-                  className={`border rounded-lg p-4 ${
+                  className={`border rounded-lg p-3 ${
                     isNA ? 'bg-slate-50' : isUploaded ? 'bg-green-50' : 'bg-white'
                   }`}
                 >
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <h4 className="font-medium">{docType.label}</h4>
-                        <span className="text-sm text-slate-500">({docType.fullName})</span>
+                        <span className="text-xs text-slate-500 hidden sm:inline">({docType.fullName})</span>
                       </div>
 
                       {isNA && (
-                        <p className="text-sm text-slate-500 mt-1 flex items-center gap-1">
-                          <Ban className="h-4 w-4" />
+                        <p className="text-xs text-slate-500 flex items-center gap-1">
+                          <Ban className="h-3 w-3" />
                           Not Applicable
                         </p>
                       )}
 
                       {isUploaded && doc?.file_name && (
-                        <div className="mt-2 flex items-center gap-2">
-                          <FileCheck className="h-4 w-4 text-green-600" />
-                          <a
-                            href={doc.file_path || '#'}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-sm text-blue-600 hover:underline"
+                        <div className="flex items-center gap-1 text-xs">
+                          <FileCheck className="h-3 w-3 text-green-600 flex-shrink-0" />
+                          <button
+                            onClick={() => viewDocument(doc)}
+                            className="text-blue-600 hover:underline truncate max-w-[150px]"
+                            title={doc.file_name}
                           >
                             {doc.file_name}
-                          </a>
-                          <span className="text-xs text-slate-400">
-                            (Uploaded {doc.uploaded_at ? new Date(doc.uploaded_at).toLocaleDateString('en-IN') : ''})
-                          </span>
+                          </button>
                         </div>
                       )}
 
                       {!isNA && !isUploaded && (
-                        <p className="text-sm text-amber-600 mt-1 flex items-center gap-1">
-                          <AlertCircle className="h-4 w-4" />
-                          Pending upload
+                        <p className="text-xs text-amber-600 flex items-center gap-1">
+                          <AlertCircle className="h-3 w-3" />
+                          Pending
                         </p>
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1 flex-shrink-0">
                       {/* Toggle NA */}
                       {doc && (
                         <Button
                           variant="outline"
                           size="sm"
                           onClick={() => toggleDocApplicable(doc)}
-                          className={isNA ? 'text-green-600' : 'text-slate-600'}
+                          className={`text-xs h-8 ${isNA ? 'text-green-600' : 'text-slate-600'}`}
                         >
-                          {isNA ? 'Mark Required' : 'Mark NA'}
+                          {isNA ? 'Mark Required' : 'NA'}
                         </Button>
                       )}
 
-                      {/* Upload / Delete */}
+                      {/* View / Upload / Delete */}
                       {!isNA && (
                         <>
                           {isUploaded && doc ? (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => deleteComplianceFile(doc)}
-                              className="text-red-600"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            <>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="text-blue-600 h-8"
+                                onClick={() => viewDocument(doc)}
+                                title="View document"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <label>
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0]
+                                    if (file && selectedMaterialForCompliance) {
+                                      handleFileUpload(selectedMaterialForCompliance.id, docType.value, file)
+                                    }
+                                    e.target.value = ''
+                                  }}
+                                  disabled={uploadingDoc === docType.value}
+                                />
+                                <Button variant="outline" size="sm" asChild className="h-8" title="Replace document">
+                                  <span className="cursor-pointer">
+                                    <Upload className="h-4 w-4" />
+                                  </span>
+                                </Button>
+                              </label>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => deleteComplianceFile(doc)}
+                                className="text-red-600 h-8"
+                                title="Delete document"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </>
                           ) : (
                             <label>
                               <input
@@ -2110,10 +2218,11 @@ export default function BOQDetailPage() {
                                 size="sm"
                                 asChild
                                 disabled={uploadingDoc === docType.value}
+                                className="h-8"
                               >
                                 <span className="cursor-pointer">
                                   {uploadingDoc === docType.value ? (
-                                    <>Uploading...</>
+                                    <>...</>
                                   ) : (
                                     <>
                                       <Upload className="h-4 w-4 mr-1" />
@@ -2132,13 +2241,13 @@ export default function BOQDetailPage() {
               )
             })}
 
-            <p className="text-xs text-slate-500 mt-4">
-              Accepted formats: PDF, DOC, DOCX, XLS, XLSX, PNG, JPG, JPEG
+            <p className="text-xs text-slate-400 mt-2">
+              Formats: PDF, DOC, XLS, PNG, JPG
             </p>
           </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setComplianceDialogOpen(false)}>Close</Button>
+          <DialogFooter className="pt-2">
+            <Button variant="outline" size="sm" onClick={() => setComplianceDialogOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
