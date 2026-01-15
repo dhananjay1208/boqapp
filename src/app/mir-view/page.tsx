@@ -32,6 +32,7 @@ import {
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
+import * as XLSX from 'xlsx'
 
 interface Site {
   id: string
@@ -356,6 +357,70 @@ export default function MIRViewPage() {
     }
   }
 
+  // Export to Excel
+  function exportToExcel() {
+    if (mirData.length === 0) {
+      toast.error('No data to export')
+      return
+    }
+
+    // Get selected names for filename
+    const siteName = sites.find(s => s.id === selectedSite)?.name || 'Site'
+    const pkgName = packages.find(p => p.id === selectedPackage)?.name || 'Package'
+    const headlineName = boqHeadlines.find(h => h.id === selectedHeadline)?.name || 'WorkCategory'
+
+    // Prepare data for export
+    const exportData = mirData.map(row => ({
+      'Work Category': row.package_name,
+      'BOQ Line': row.boq_line_no,
+      'Invoice No.': row.invoice_no || '-',
+      'Date': row.receipt_date
+        ? new Date(row.receipt_date).toLocaleDateString('en-IN', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+          })
+        : '-',
+      'Description': row.material_name,
+      'Qty': row.quantity > 0 ? row.quantity : '-',
+      'Unit': row.unit,
+      'DC': row.dc_status,
+      'MIR': row.mir_status,
+      'Test Cert': row.test_cert_status,
+      'TDS': row.tds_status,
+    }))
+
+    // Create workbook and worksheet
+    const wb = XLSX.utils.book_new()
+    const ws = XLSX.utils.json_to_sheet(exportData)
+
+    // Set column widths
+    ws['!cols'] = [
+      { wch: 20 }, // Work Category
+      { wch: 10 }, // BOQ Line
+      { wch: 15 }, // Invoice No.
+      { wch: 12 }, // Date
+      { wch: 30 }, // Description
+      { wch: 10 }, // Qty
+      { wch: 8 },  // Unit
+      { wch: 6 },  // DC
+      { wch: 6 },  // MIR
+      { wch: 10 }, // Test Cert
+      { wch: 6 },  // TDS
+    ]
+
+    XLSX.utils.book_append_sheet(wb, ws, 'MIR Report')
+
+    // Generate filename with date
+    const date = new Date().toISOString().split('T')[0]
+    const filename = `MIR_${siteName}_${pkgName}_${headlineName}_${date}.xlsx`
+      .replace(/[^a-zA-Z0-9_.-]/g, '_')
+
+    // Download
+    XLSX.writeFile(wb, filename)
+    toast.success('Excel file downloaded')
+  }
+
   // Calculate summary stats
   const totalMaterials = new Set(mirData.map(r => r.material_id)).size
   const totalReceipts = mirData.filter(r => r.receipt_date).length
@@ -376,6 +441,12 @@ export default function MIRViewPage() {
             Material Inspection Report - View materials, receipts, and compliance status
           </p>
         </div>
+        {mirData.length > 0 && (
+          <Button onClick={exportToExcel} className="gap-2">
+            <Download className="h-4 w-4" />
+            Export to Excel
+          </Button>
+        )}
       </div>
 
       {/* Filters */}
