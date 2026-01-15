@@ -19,12 +19,14 @@ import {
   Receipt,
   BarChart3,
   Settings,
+  Table2,
 } from 'lucide-react'
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Sites', href: '/sites', icon: Building2 },
   { name: 'BOQ', href: '/boq', icon: FileSpreadsheet },
+  { name: 'MIR View', href: '/mir-view', icon: Table2 },
   { name: 'Materials', href: '/materials', icon: Package },
   { name: 'Compliance', href: '/compliance', icon: ClipboardCheck },
   { name: 'Checklists', href: '/checklists', icon: ClipboardCheck },
