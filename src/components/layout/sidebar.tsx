@@ -9,8 +9,6 @@ import {
   FileSpreadsheet,
   Package,
   ClipboardCheck,
-  FileText,
-  Receipt,
   BarChart3,
   Settings,
   Table2,
@@ -23,11 +21,8 @@ const navigation = [
   { name: 'BOQ', href: '/boq', icon: FileSpreadsheet },
   { name: 'MIR View', href: '/mir-view', icon: Table2 },
   { name: 'Materials', href: '/materials', icon: Package },
-  { name: 'Compliance', href: '/compliance', icon: ClipboardCheck },
   { name: 'Checklists', href: '/checklists', icon: ClipboardCheck },
-  { name: 'JMR', href: '/jmr', icon: FileText },
   { name: 'Billing Readiness', href: '/billing-readiness', icon: CheckSquare },
-  { name: 'Billing', href: '/billing', icon: Receipt },
   { name: 'Reports', href: '/reports', icon: BarChart3 },
 ]
 
