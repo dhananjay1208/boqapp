@@ -83,6 +83,7 @@ import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 import BOQChecklistsTab from '@/components/boq/boq-checklists-tab'
+import BOQJMRTab from '@/components/boq/boq-jmr-tab'
 
 interface BOQHeadline {
   id: string
@@ -1254,9 +1255,9 @@ export default function BOQDetailPage() {
           </CardContent>
         </Card>
 
-        {/* Tabs for Line Items/Materials and Checklists */}
+        {/* Tabs for Line Items/Materials, Checklists, and JMR */}
         <Tabs defaultValue="materials" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-2 max-w-md">
+          <TabsList className="grid w-full grid-cols-3 max-w-xl">
             <TabsTrigger value="materials" className="flex items-center gap-2">
               <Package className="h-4 w-4" />
               Line Items & Materials
@@ -1264,6 +1265,10 @@ export default function BOQDetailPage() {
             <TabsTrigger value="checklists" className="flex items-center gap-2">
               <ClipboardCheck className="h-4 w-4" />
               Checklists
+            </TabsTrigger>
+            <TabsTrigger value="jmr" className="flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              JMR
             </TabsTrigger>
           </TabsList>
 
@@ -1571,6 +1576,20 @@ export default function BOQDetailPage() {
 
           <TabsContent value="checklists">
             <BOQChecklistsTab
+              headlineId={headlineId}
+              lineItems={lineItemsWithMaterials.map(li => ({
+                id: li.id,
+                item_number: li.item_number,
+                description: li.description,
+                location: li.location,
+                unit: li.unit,
+                quantity: Number(li.quantity) || 0,
+              }))}
+            />
+          </TabsContent>
+
+          <TabsContent value="jmr">
+            <BOQJMRTab
               headlineId={headlineId}
               lineItems={lineItemsWithMaterials.map(li => ({
                 id: li.id,
