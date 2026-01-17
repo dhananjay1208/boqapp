@@ -328,6 +328,18 @@ export default function BillingReadinessPage() {
               return { status: 'NA', files: [] }
             }
 
+            // For DC type, show Y if at least one DC is uploaded (multiple DCs allowed)
+            if (docType === 'dc') {
+              if (uploadedDocs.length > 0) {
+                return {
+                  status: 'Y',
+                  files: uploadedDocs.map(d => ({ path: d.file_path!, name: d.file_name || 'Document' })),
+                }
+              }
+              return { status: 'N', files: [] }
+            }
+
+            // For other types, require all applicable docs to be uploaded
             if (uploadedDocs.length === applicableDocs.length) {
               return {
                 status: 'Y',

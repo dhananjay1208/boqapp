@@ -165,6 +165,8 @@ interface ComplianceDocument {
   is_uploaded: boolean
   uploaded_at: string | null
   notes: string | null
+  document_date: string | null
+  reference_number: string | null
 }
 
 const COMPLIANCE_DOC_TYPES = [
@@ -262,6 +264,12 @@ export default function BOQDetailPage() {
   const [complianceDialogOpen, setComplianceDialogOpen] = useState(false)
   const [selectedMaterialForCompliance, setSelectedMaterialForCompliance] = useState<MaterialWithReceipts | null>(null)
   const [uploadingDoc, setUploadingDoc] = useState<string | null>(null) // document_type being uploaded
+
+  // Upload with date dialog
+  const [uploadWithDateDialogOpen, setUploadWithDateDialogOpen] = useState(false)
+  const [uploadDocType, setUploadDocType] = useState<string>('')
+  const [uploadDocDate, setUploadDocDate] = useState<string>(new Date().toISOString().split('T')[0])
+  const [uploadDocFile, setUploadDocFile] = useState<File | null>(null)
 
   const [saving, setSaving] = useState(false)
 
@@ -943,7 +951,7 @@ export default function BOQDetailPage() {
     }
   }
 
-  async function handleFileUpload(materialId: string, docType: string, file: File) {
+  async function handleFileUpload(materialId: string, docType: string, file: File, documentDate?: string) {
     setUploadingDoc(docType)
 
     try {
@@ -960,7 +968,6 @@ export default function BOQDetailPage() {
 
       if (uploadError) {
         console.error('Upload error details:', uploadError)
-        // Show the actual error message for debugging
         if (uploadError.message.includes('bucket') || uploadError.message.includes('not found')) {
           toast.error('Storage bucket not configured. Please create "compliance-docs" bucket in Supabase.')
         } else if (uploadError.message.includes('policy') || uploadError.message.includes('permission') || uploadError.message.includes('security')) {
@@ -971,33 +978,14 @@ export default function BOQDetailPage() {
         return
       }
 
-      // Store just the file path - we'll generate signed URLs when viewing
       const filePath = fileName
 
-      // Update or create compliance document record
-      const { data: existingDoc } = await supabase
-        .from('compliance_documents')
-        .select('id')
-        .eq('material_id', materialId)
-        .eq('document_type', docType)
-        .single()
-
+      // For DC type, always create a new document (multiple DCs allowed)
+      // For other types, update if exists or create new
       let newDocId: string | null = null
 
-      if (existingDoc) {
-        const { error } = await supabase
-          .from('compliance_documents')
-          .update({
-            file_path: filePath,
-            file_name: file.name,
-            is_uploaded: true,
-            uploaded_at: new Date().toISOString(),
-          })
-          .eq('id', existingDoc.id)
-
-        if (error) throw error
-        newDocId = existingDoc.id
-      } else {
+      if (docType === 'dc') {
+        // Always insert new DC document
         const { data: insertedDoc, error } = await supabase
           .from('compliance_documents')
           .insert({
@@ -1008,48 +996,89 @@ export default function BOQDetailPage() {
             is_applicable: true,
             is_uploaded: true,
             uploaded_at: new Date().toISOString(),
+            document_date: documentDate || null,
           })
           .select('id')
           .single()
 
         if (error) throw error
         newDocId = insertedDoc?.id || null
+      } else {
+        // For MIR, Test Cert, TDS - check if exists first
+        const { data: existingDoc } = await supabase
+          .from('compliance_documents')
+          .select('id')
+          .eq('material_id', materialId)
+          .eq('document_type', docType)
+          .single()
+
+        if (existingDoc) {
+          const { error } = await supabase
+            .from('compliance_documents')
+            .update({
+              file_path: filePath,
+              file_name: file.name,
+              is_uploaded: true,
+              uploaded_at: new Date().toISOString(),
+              document_date: documentDate || null,
+            })
+            .eq('id', existingDoc.id)
+
+          if (error) throw error
+          newDocId = existingDoc.id
+        } else {
+          const { data: insertedDoc, error } = await supabase
+            .from('compliance_documents')
+            .insert({
+              material_id: materialId,
+              document_type: docType,
+              file_path: filePath,
+              file_name: file.name,
+              is_applicable: true,
+              is_uploaded: true,
+              uploaded_at: new Date().toISOString(),
+              document_date: documentDate || null,
+            })
+            .select('id')
+            .single()
+
+          if (error) throw error
+          newDocId = insertedDoc?.id || null
+        }
       }
 
       toast.success('Document uploaded successfully')
 
-      // Update the selected material's compliance docs in state immediately
+      // Update state immediately
       if (selectedMaterialForCompliance) {
-        const existingDocInState = selectedMaterialForCompliance.compliance_docs.find(d => d.document_type === docType)
+        const newDoc: ComplianceDocument = {
+          id: newDocId || crypto.randomUUID(),
+          material_id: materialId,
+          document_type: docType as 'dc' | 'mir' | 'test_certificate' | 'tds',
+          file_path: filePath,
+          file_name: file.name,
+          is_applicable: true,
+          is_uploaded: true,
+          uploaded_at: new Date().toISOString(),
+          notes: null,
+          document_date: documentDate || null,
+          reference_number: null,
+        }
 
         let updatedDocs: ComplianceDocument[]
-        if (existingDocInState) {
-          // Update existing document in state
-          updatedDocs = selectedMaterialForCompliance.compliance_docs.map(d =>
-            d.document_type === docType
-              ? {
-                  ...d,
-                  file_path: filePath,
-                  file_name: file.name,
-                  is_uploaded: true,
-                  uploaded_at: new Date().toISOString()
-                }
-              : d
-          )
-        } else {
-          // Add new document to state
-          const newDoc: ComplianceDocument = {
-            id: newDocId || crypto.randomUUID(),
-            material_id: materialId,
-            document_type: docType as 'dc' | 'mir' | 'test_certificate' | 'tds',
-            file_path: filePath,
-            file_name: file.name,
-            is_applicable: true,
-            is_uploaded: true,
-            uploaded_at: new Date().toISOString(),
-            notes: null,
-          }
+        if (docType === 'dc') {
+          // Add new DC to the list
           updatedDocs = [...selectedMaterialForCompliance.compliance_docs, newDoc]
+        } else {
+          // For other types, update or add
+          const existingDocInState = selectedMaterialForCompliance.compliance_docs.find(d => d.document_type === docType)
+          if (existingDocInState) {
+            updatedDocs = selectedMaterialForCompliance.compliance_docs.map(d =>
+              d.document_type === docType ? { ...d, ...newDoc, id: d.id } : d
+            )
+          } else {
+            updatedDocs = [...selectedMaterialForCompliance.compliance_docs, newDoc]
+          }
         }
 
         setSelectedMaterialForCompliance({
@@ -1067,6 +1096,24 @@ export default function BOQDetailPage() {
     }
   }
 
+  // Handle upload with date dialog submission
+  async function handleUploadWithDate() {
+    if (!uploadDocFile || !selectedMaterialForCompliance) return
+
+    await handleFileUpload(selectedMaterialForCompliance.id, uploadDocType, uploadDocFile, uploadDocDate)
+    setUploadWithDateDialogOpen(false)
+    setUploadDocFile(null)
+    setUploadDocDate(new Date().toISOString().split('T')[0])
+  }
+
+  // Open upload dialog with date for DC
+  function openUploadWithDateDialog(docType: string, file: File) {
+    setUploadDocType(docType)
+    setUploadDocFile(file)
+    setUploadDocDate(new Date().toISOString().split('T')[0])
+    setUploadWithDateDialogOpen(true)
+  }
+
   async function deleteComplianceFile(doc: ComplianceDocument) {
     if (!confirm('Delete this document?')) return
 
@@ -1076,33 +1123,53 @@ export default function BOQDetailPage() {
         await supabase.storage.from('compliance-docs').remove([doc.file_path])
       }
 
-      // Update the document record
-      const { error } = await supabase
-        .from('compliance_documents')
-        .update({
-          file_path: null,
-          file_name: null,
-          is_uploaded: false,
-          uploaded_at: null,
-        })
-        .eq('id', doc.id)
+      // For DC type, delete the entire record (multiple DCs allowed)
+      // For other types, just clear the file info (keep record for NA tracking)
+      if (doc.document_type === 'dc') {
+        const { error } = await supabase
+          .from('compliance_documents')
+          .delete()
+          .eq('id', doc.id)
 
-      if (error) throw error
-      toast.success('Document deleted')
+        if (error) throw error
 
-      // Update the selected material's compliance docs in state immediately
-      if (selectedMaterialForCompliance) {
-        const updatedDocs = selectedMaterialForCompliance.compliance_docs.map(d =>
-          d.id === doc.id
-            ? { ...d, file_path: null, file_name: null, is_uploaded: false, uploaded_at: null }
-            : d
-        )
-        setSelectedMaterialForCompliance({
-          ...selectedMaterialForCompliance,
-          compliance_docs: updatedDocs
-        })
+        // Remove from state
+        if (selectedMaterialForCompliance) {
+          const updatedDocs = selectedMaterialForCompliance.compliance_docs.filter(d => d.id !== doc.id)
+          setSelectedMaterialForCompliance({
+            ...selectedMaterialForCompliance,
+            compliance_docs: updatedDocs
+          })
+        }
+      } else {
+        const { error } = await supabase
+          .from('compliance_documents')
+          .update({
+            file_path: null,
+            file_name: null,
+            is_uploaded: false,
+            uploaded_at: null,
+            document_date: null,
+          })
+          .eq('id', doc.id)
+
+        if (error) throw error
+
+        // Update in state
+        if (selectedMaterialForCompliance) {
+          const updatedDocs = selectedMaterialForCompliance.compliance_docs.map(d =>
+            d.id === doc.id
+              ? { ...d, file_path: null, file_name: null, is_uploaded: false, uploaded_at: null, document_date: null }
+              : d
+          )
+          setSelectedMaterialForCompliance({
+            ...selectedMaterialForCompliance,
+            compliance_docs: updatedDocs
+          })
+        }
       }
 
+      toast.success('Document deleted')
       fetchData()
     } catch (error) {
       console.error('Error deleting document:', error)
@@ -1957,7 +2024,7 @@ export default function BOQDetailPage() {
 
       {/* Compliance Documents Dialog */}
       <Dialog open={complianceDialogOpen} onOpenChange={setComplianceDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileText className="h-5 w-5" />
@@ -1970,14 +2037,122 @@ export default function BOQDetailPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-2 py-2 overflow-y-auto flex-1">
+          <div className="space-y-4 py-2">
             {COMPLIANCE_DOC_TYPES.map((docType) => {
-              const doc = selectedMaterialForCompliance?.compliance_docs.find(
+              // For DC, get all documents of this type
+              const docs = selectedMaterialForCompliance?.compliance_docs.filter(
                 d => d.document_type === docType.value
-              )
-              const isNA = doc && !doc.is_applicable
-              const isUploaded = doc && doc.is_applicable && doc.is_uploaded
+              ) || []
 
+              // For non-DC types, get single doc
+              const singleDoc = docType.value !== 'dc' ? docs[0] : null
+              const isNA = singleDoc && !singleDoc.is_applicable
+              const isUploaded = singleDoc && singleDoc.is_applicable && singleDoc.is_uploaded
+
+              // For DC type - show list of all uploaded DCs
+              if (docType.value === 'dc') {
+                const uploadedDCs = docs.filter(d => d.is_uploaded && d.file_path)
+
+                return (
+                  <div key={docType.value} className="border rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div>
+                        <h4 className="font-medium">{docType.label}</h4>
+                        <span className="text-xs text-slate-500">({docType.fullName})</span>
+                      </div>
+                      <label>
+                        <input
+                          type="file"
+                          className="hidden"
+                          accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0]
+                            if (file) {
+                              openUploadWithDateDialog(docType.value, file)
+                            }
+                            e.target.value = ''
+                          }}
+                          disabled={uploadingDoc === docType.value}
+                        />
+                        <Button
+                          variant="default"
+                          size="sm"
+                          asChild
+                          disabled={uploadingDoc === docType.value}
+                          className="h-8"
+                        >
+                          <span className="cursor-pointer">
+                            {uploadingDoc === docType.value ? (
+                              <>Uploading...</>
+                            ) : (
+                              <>
+                                <Plus className="h-4 w-4 mr-1" />
+                                Add DC
+                              </>
+                            )}
+                          </span>
+                        </Button>
+                      </label>
+                    </div>
+
+                    {uploadedDCs.length === 0 ? (
+                      <p className="text-xs text-amber-600 flex items-center gap-1 py-2">
+                        <AlertCircle className="h-3 w-3" />
+                        No DCs uploaded yet
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {uploadedDCs.map((doc) => (
+                          <div
+                            key={doc.id}
+                            className="flex items-center justify-between gap-2 bg-green-50 rounded p-2"
+                          >
+                            <div className="flex items-center gap-2 flex-1 min-w-0">
+                              <FileCheck className="h-4 w-4 text-green-600 flex-shrink-0" />
+                              <div className="min-w-0">
+                                <button
+                                  onClick={() => viewDocument(doc)}
+                                  className="text-sm text-blue-600 hover:underline truncate block max-w-[200px]"
+                                  title={doc.file_name || ''}
+                                >
+                                  {doc.file_name}
+                                </button>
+                                {doc.document_date && (
+                                  <p className="text-xs text-slate-500">
+                                    Date: {new Date(doc.document_date).toLocaleDateString('en-IN')}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0 text-blue-600"
+                                onClick={() => viewDocument(doc)}
+                                title="View"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0 text-red-600"
+                                onClick={() => deleteComplianceFile(doc)}
+                                title="Delete"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              }
+
+              // For MIR, Test Cert, TDS - single document behavior
               return (
                 <div
                   key={docType.value}
@@ -1999,15 +2174,15 @@ export default function BOQDetailPage() {
                         </p>
                       )}
 
-                      {isUploaded && doc?.file_name && (
+                      {isUploaded && singleDoc?.file_name && (
                         <div className="flex items-center gap-1 text-xs">
                           <FileCheck className="h-3 w-3 text-green-600 flex-shrink-0" />
                           <button
-                            onClick={() => viewDocument(doc)}
+                            onClick={() => viewDocument(singleDoc)}
                             className="text-blue-600 hover:underline truncate max-w-[150px]"
-                            title={doc.file_name}
+                            title={singleDoc.file_name}
                           >
-                            {doc.file_name}
+                            {singleDoc.file_name}
                           </button>
                         </div>
                       )}
@@ -2021,28 +2196,26 @@ export default function BOQDetailPage() {
                     </div>
 
                     <div className="flex items-center gap-1 flex-shrink-0">
-                      {/* Toggle NA */}
-                      {doc && (
+                      {singleDoc && (
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => toggleDocApplicable(doc)}
+                          onClick={() => toggleDocApplicable(singleDoc)}
                           className={`text-xs h-8 ${isNA ? 'text-green-600' : 'text-slate-600'}`}
                         >
                           {isNA ? 'Mark Required' : 'NA'}
                         </Button>
                       )}
 
-                      {/* View / Upload / Delete */}
                       {!isNA && (
                         <>
-                          {isUploaded && doc ? (
+                          {isUploaded && singleDoc ? (
                             <>
                               <Button
                                 variant="outline"
                                 size="sm"
                                 className="text-blue-600 h-8"
-                                onClick={() => viewDocument(doc)}
+                                onClick={() => viewDocument(singleDoc)}
                                 title="View document"
                               >
                                 <Eye className="h-4 w-4" />
@@ -2070,7 +2243,7 @@ export default function BOQDetailPage() {
                               <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => deleteComplianceFile(doc)}
+                                onClick={() => deleteComplianceFile(singleDoc)}
                                 className="text-red-600 h-8"
                                 title="Delete document"
                               >
@@ -2127,6 +2300,48 @@ export default function BOQDetailPage() {
 
           <DialogFooter className="pt-2">
             <Button variant="outline" size="sm" onClick={() => setComplianceDialogOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Upload with Date Dialog (for DC) */}
+      <Dialog open={uploadWithDateDialogOpen} onOpenChange={setUploadWithDateDialogOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Upload DC</DialogTitle>
+            <DialogDescription>
+              Enter the DC date for: {uploadDocFile?.name}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="dc_date">DC Date *</Label>
+              <Input
+                id="dc_date"
+                type="date"
+                value={uploadDocDate}
+                onChange={(e) => setUploadDocDate(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setUploadWithDateDialogOpen(false)
+                setUploadDocFile(null)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleUploadWithDate}
+              disabled={!uploadDocDate || uploadingDoc === 'dc'}
+            >
+              {uploadingDoc === 'dc' ? 'Uploading...' : 'Upload'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
