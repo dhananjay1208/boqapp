@@ -49,6 +49,8 @@ import {
   XCircle,
   MinusCircle,
   Eye,
+  Upload,
+  FileCheck,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
@@ -82,6 +84,8 @@ interface BOQChecklist {
   location: string | null
   notes: string | null
   status: 'draft' | 'completed'
+  signed_copy_path: string | null
+  signed_copy_name: string | null
   created_at: string
   items?: BOQChecklistItem[]
   clearances?: BOQChecklistClearance[]
@@ -143,6 +147,8 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
   const [formClearances, setFormClearances] = useState<{ clearance_type: string; representative_name: string; clearance_date: string }[]>([])
 
   const printRef = useRef<HTMLDivElement>(null)
+  const signedCopyInputRef = useRef<HTMLInputElement>(null)
+  const [uploadingSignedCopy, setUploadingSignedCopy] = useState(false)
 
   useEffect(() => {
     fetchData()
@@ -447,6 +453,109 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
     } catch (error) {
       console.error('Error deleting checklist:', error)
       toast.error('Failed to delete checklist')
+    }
+  }
+
+  async function handleUploadSignedCopy(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file || !selectedChecklist) return
+
+    setUploadingSignedCopy(true)
+    try {
+      // Create file path
+      const fileExt = file.name.split('.').pop()
+      const fileName = `${selectedChecklist.id}_signed.${fileExt}`
+      const filePath = `signed-checklists/${fileName}`
+
+      // Upload to Supabase storage
+      const { error: uploadError } = await supabase.storage
+        .from('compliance-docs')
+        .upload(filePath, file, { upsert: true })
+
+      if (uploadError) throw uploadError
+
+      // Update checklist record with file path
+      const { error: updateError } = await supabase
+        .from('boq_checklists')
+        .update({
+          signed_copy_path: filePath,
+          signed_copy_name: file.name,
+        })
+        .eq('id', selectedChecklist.id)
+
+      if (updateError) throw updateError
+
+      // Update local state
+      setSelectedChecklist({
+        ...selectedChecklist,
+        signed_copy_path: filePath,
+        signed_copy_name: file.name,
+      })
+
+      toast.success('Signed copy uploaded successfully')
+      fetchData()
+    } catch (error) {
+      console.error('Error uploading signed copy:', error)
+      toast.error('Failed to upload signed copy')
+    } finally {
+      setUploadingSignedCopy(false)
+      if (signedCopyInputRef.current) {
+        signedCopyInputRef.current.value = ''
+      }
+    }
+  }
+
+  async function viewSignedCopy(filePath: string) {
+    try {
+      const { data, error } = await supabase.storage
+        .from('compliance-docs')
+        .createSignedUrl(filePath, 3600)
+
+      if (error) {
+        toast.error('Failed to generate download link')
+        return
+      }
+
+      window.open(data.signedUrl, '_blank')
+    } catch (error) {
+      console.error('Error viewing signed copy:', error)
+      toast.error('Failed to view signed copy')
+    }
+  }
+
+  async function deleteSignedCopy() {
+    if (!selectedChecklist?.signed_copy_path) return
+    if (!confirm('Are you sure you want to delete the signed copy?')) return
+
+    try {
+      // Delete from storage
+      await supabase.storage
+        .from('compliance-docs')
+        .remove([selectedChecklist.signed_copy_path])
+
+      // Update database
+      const { error } = await supabase
+        .from('boq_checklists')
+        .update({
+          signed_copy_path: null,
+          signed_copy_name: null,
+        })
+        .eq('id', selectedChecklist.id)
+
+      if (error) throw error
+
+      // Update local state
+      setSelectedChecklist({
+        ...selectedChecklist,
+        signed_copy_path: null,
+        signed_copy_name: null,
+      })
+
+      toast.success('Signed copy deleted')
+      fetchData()
+    } catch (error) {
+      console.error('Error deleting signed copy:', error)
+      toast.error('Failed to delete signed copy')
     }
   }
 
@@ -1029,6 +1138,69 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
                   )
                 })}
               </div>
+            </div>
+
+            {/* Signed Copy Upload */}
+            <div className="border-t pt-4 mt-4">
+              <Label className="mb-2 block">Signed Copy</Label>
+              <input
+                type="file"
+                ref={signedCopyInputRef}
+                accept=".pdf,.jpg,.jpeg,.png"
+                onChange={handleUploadSignedCopy}
+                className="hidden"
+              />
+              {selectedChecklist?.signed_copy_path ? (
+                <div className="flex items-center gap-3 p-3 bg-green-50 border border-green-200 rounded-lg">
+                  <FileCheck className="h-5 w-5 text-green-600" />
+                  <div className="flex-1">
+                    <p className="font-medium text-green-800">Signed copy uploaded</p>
+                    <p className="text-sm text-green-600">{selectedChecklist.signed_copy_name}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => viewSignedCopy(selectedChecklist.signed_copy_path!)}
+                    >
+                      <Eye className="h-4 w-4 mr-1" />
+                      View
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={deleteSignedCopy}
+                      className="text-red-600 hover:text-red-700"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                  <Upload className="h-5 w-5 text-slate-400" />
+                  <div className="flex-1">
+                    <p className="text-sm text-slate-600">
+                      Print the checklist, get it signed, and upload the signed copy here.
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => signedCopyInputRef.current?.click()}
+                    disabled={uploadingSignedCopy}
+                  >
+                    {uploadingSignedCopy ? (
+                      <>Uploading...</>
+                    ) : (
+                      <>
+                        <Upload className="h-4 w-4 mr-1" />
+                        Upload Signed Copy
+                      </>
+                    )}
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
 
