@@ -982,6 +982,8 @@ export default function BOQDetailPage() {
         .eq('document_type', docType)
         .single()
 
+      let newDocId: string | null = null
+
       if (existingDoc) {
         const { error } = await supabase
           .from('compliance_documents')
@@ -994,8 +996,9 @@ export default function BOQDetailPage() {
           .eq('id', existingDoc.id)
 
         if (error) throw error
+        newDocId = existingDoc.id
       } else {
-        const { error } = await supabase
+        const { data: insertedDoc, error } = await supabase
           .from('compliance_documents')
           .insert({
             material_id: materialId,
@@ -1006,25 +1009,49 @@ export default function BOQDetailPage() {
             is_uploaded: true,
             uploaded_at: new Date().toISOString(),
           })
+          .select('id')
+          .single()
 
         if (error) throw error
+        newDocId = insertedDoc?.id || null
       }
 
       toast.success('Document uploaded successfully')
 
       // Update the selected material's compliance docs in state immediately
       if (selectedMaterialForCompliance) {
-        const updatedDocs = selectedMaterialForCompliance.compliance_docs.map(d =>
-          d.document_type === docType
-            ? {
-                ...d,
-                file_path: filePath,
-                file_name: file.name,
-                is_uploaded: true,
-                uploaded_at: new Date().toISOString()
-              }
-            : d
-        )
+        const existingDocInState = selectedMaterialForCompliance.compliance_docs.find(d => d.document_type === docType)
+
+        let updatedDocs: ComplianceDocument[]
+        if (existingDocInState) {
+          // Update existing document in state
+          updatedDocs = selectedMaterialForCompliance.compliance_docs.map(d =>
+            d.document_type === docType
+              ? {
+                  ...d,
+                  file_path: filePath,
+                  file_name: file.name,
+                  is_uploaded: true,
+                  uploaded_at: new Date().toISOString()
+                }
+              : d
+          )
+        } else {
+          // Add new document to state
+          const newDoc: ComplianceDocument = {
+            id: newDocId || crypto.randomUUID(),
+            material_id: materialId,
+            document_type: docType as 'dc' | 'mir' | 'test_certificate' | 'tds',
+            file_path: filePath,
+            file_name: file.name,
+            is_applicable: true,
+            is_uploaded: true,
+            uploaded_at: new Date().toISOString(),
+            notes: null,
+          }
+          updatedDocs = [...selectedMaterialForCompliance.compliance_docs, newDoc]
+        }
+
         setSelectedMaterialForCompliance({
           ...selectedMaterialForCompliance,
           compliance_docs: updatedDocs
