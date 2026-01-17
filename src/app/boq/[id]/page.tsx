@@ -1578,7 +1578,7 @@ export default function BOQDetailPage() {
                 description: li.description,
                 location: li.location,
                 unit: li.unit,
-                quantity: li.quantity,
+                quantity: Number(li.quantity) || 0,
               }))}
             />
           </TabsContent>

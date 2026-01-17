@@ -90,11 +90,17 @@ export default function ChecklistsPage() {
         `)
         .order('created_at', { ascending: false })
 
-      if (error) throw error
+      if (error) {
+        console.error('Error fetching templates:', error)
+        // Table might not exist yet - show empty list
+        setTemplates([])
+        return
+      }
       setTemplates(data || [])
     } catch (error) {
       console.error('Error fetching templates:', error)
-      toast.error('Failed to load checklist templates')
+      // Don't show toast - table might not exist yet
+      setTemplates([])
     } finally {
       setLoading(false)
     }

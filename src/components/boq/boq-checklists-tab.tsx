@@ -146,12 +146,12 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
 
   useEffect(() => {
     fetchData()
-  }, [headlineId])
+  }, [headlineId, lineItems.length])
 
   async function fetchData() {
     try {
       // Fetch templates
-      const { data: templatesData } = await supabase
+      const { data: templatesData, error: templatesError } = await supabase
         .from('checklist_templates')
         .select(`
           *,
@@ -159,12 +159,18 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
         `)
         .order('name')
 
-      setTemplates(templatesData || [])
+      if (templatesError) {
+        console.error('Error fetching templates:', templatesError)
+        // Tables might not exist yet - that's okay
+        setTemplates([])
+      } else {
+        setTemplates(templatesData || [])
+      }
 
       // Fetch checklists for all line items
       const lineItemIds = lineItems.map(li => li.id)
       if (lineItemIds.length > 0) {
-        const { data: checklistsData } = await supabase
+        const { data: checklistsData, error: checklistsError } = await supabase
           .from('boq_checklists')
           .select(`
             *,
@@ -174,11 +180,17 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
           .in('line_item_id', lineItemIds)
           .order('created_at', { ascending: false })
 
-        setChecklists(checklistsData || [])
+        if (checklistsError) {
+          console.error('Error fetching checklists:', checklistsError)
+          // Tables might not exist yet - that's okay
+          setChecklists([])
+        } else {
+          setChecklists(checklistsData || [])
+        }
       }
     } catch (error) {
       console.error('Error fetching data:', error)
-      toast.error('Failed to load checklists')
+      // Don't show error toast - tables might not exist yet
     } finally {
       setLoading(false)
     }
