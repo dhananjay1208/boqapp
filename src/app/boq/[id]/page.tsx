@@ -82,6 +82,7 @@ import {
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
+import BOQChecklistsTab from '@/components/boq/boq-checklists-tab'
 
 interface BOQHeadline {
   id: string
@@ -1569,185 +1570,17 @@ export default function BOQDetailPage() {
           </TabsContent>
 
           <TabsContent value="checklists">
-            <Card>
-              <CardHeader>
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                  <div>
-                    <CardTitle className="flex items-center gap-2">
-                      <ClipboardList className="h-5 w-5" />
-                      Checklists
-                    </CardTitle>
-                    <CardDescription>
-                      Create and manage checklists for this BOQ item
-                    </CardDescription>
-                  </div>
-                  <Button onClick={openAddChecklistDialog}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Checklist
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {checklists.length === 0 ? (
-                  <div className="text-center py-12">
-                    <ClipboardList className="h-12 w-12 mx-auto text-slate-300 mb-4" />
-                    <h3 className="text-lg font-medium text-slate-900 mb-2">No checklists yet</h3>
-                    <p className="text-slate-500 mb-4">Create checklists to track activities for this BOQ item.</p>
-                    <Button onClick={openAddChecklistDialog}>
-                      <Plus className="h-4 w-4 mr-2" />
-                      Add Checklist
-                    </Button>
-                  </div>
-                ) : (
-                  checklists.map((checklist) => {
-                    const progress = getChecklistProgress(checklist)
-                    const completedCount = checklist.items.filter(i => i.status === 'completed').length
-                    return (
-                      <Collapsible
-                        key={checklist.id}
-                        open={expandedChecklists.has(checklist.id)}
-                        onOpenChange={() => toggleChecklistExpand(checklist.id)}
-                      >
-                        <div className="border rounded-lg">
-                          {/* Checklist Header */}
-                          <div className="flex items-center justify-between p-4 bg-slate-50">
-                            <CollapsibleTrigger className="flex items-center gap-3 flex-1 text-left">
-                              {expandedChecklists.has(checklist.id) ? (
-                                <ChevronDown className="h-5 w-5 text-slate-400" />
-                              ) : (
-                                <ChevronRight className="h-5 w-5 text-slate-400" />
-                              )}
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2">
-                                  <ClipboardCheck className="h-4 w-4 text-purple-600" />
-                                  <span className="font-medium">{checklist.name}</span>
-                                  <Badge variant="outline" className="text-xs">
-                                    {completedCount}/{checklist.items.length} done
-                                  </Badge>
-                                </div>
-                                {checklist.items.length > 0 && (
-                                  <div className="mt-2 max-w-xs">
-                                    <Progress value={progress} className="h-2" />
-                                  </div>
-                                )}
-                              </div>
-                            </CollapsibleTrigger>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon">
-                                  <MoreHorizontal className="h-4 w-4" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuItem onClick={() => openEditChecklistDialog(checklist)}>
-                                  <Pencil className="h-4 w-4 mr-2" />
-                                  Edit Checklist
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => openAddChecklistItemDialog(checklist.id)}>
-                                  <Plus className="h-4 w-4 mr-2" />
-                                  Add Item
-                                </DropdownMenuItem>
-                                <DropdownMenuItem
-                                  className="text-red-600"
-                                  onClick={() => deleteChecklist(checklist.id)}
-                                >
-                                  <Trash2 className="h-4 w-4 mr-2" />
-                                  Delete
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-
-                          {/* Expanded Content - Checklist Items */}
-                          <CollapsibleContent>
-                            <div className="p-4 border-t">
-                              {checklist.items.length === 0 ? (
-                                <div className="text-center py-6">
-                                  <Circle className="h-8 w-8 mx-auto text-slate-300 mb-2" />
-                                  <p className="text-sm text-slate-500 mb-3">No items in this checklist</p>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => openAddChecklistItemDialog(checklist.id)}
-                                  >
-                                    <Plus className="h-4 w-4 mr-1" />
-                                    Add Item
-                                  </Button>
-                                </div>
-                              ) : (
-                                <div className="space-y-2">
-                                  <div className="flex justify-between items-center mb-3">
-                                    <h4 className="font-medium text-sm">Items</h4>
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => openAddChecklistItemDialog(checklist.id)}
-                                    >
-                                      <Plus className="h-4 w-4 mr-1" />
-                                      Add
-                                    </Button>
-                                  </div>
-
-                                  {checklist.items.map((item) => (
-                                    <div
-                                      key={item.id}
-                                      className={`flex items-center gap-3 p-3 rounded-lg border ${
-                                        item.status === 'completed' ? 'bg-green-50 border-green-200' : 'bg-white'
-                                      }`}
-                                    >
-                                      <Checkbox
-                                        checked={item.status === 'completed'}
-                                        onCheckedChange={() => toggleChecklistItemStatus(item)}
-                                      />
-                                      <div className="flex-1">
-                                        <p className={`font-medium ${
-                                          item.status === 'completed' ? 'line-through text-slate-500' : ''
-                                        }`}>
-                                          {item.activity_name}
-                                        </p>
-                                        {item.notes && (
-                                          <p className="text-sm text-slate-500 mt-1">{item.notes}</p>
-                                        )}
-                                        {item.status === 'completed' && item.completed_at && (
-                                          <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
-                                            <CheckCircle2 className="h-3 w-3" />
-                                            Completed {new Date(item.completed_at).toLocaleDateString('en-IN')}
-                                          </p>
-                                        )}
-                                      </div>
-                                      <DropdownMenu>
-                                        <DropdownMenuTrigger asChild>
-                                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                                            <MoreHorizontal className="h-4 w-4" />
-                                          </Button>
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent align="end">
-                                          <DropdownMenuItem onClick={() => openEditChecklistItemDialog(item)}>
-                                            <Pencil className="h-4 w-4 mr-2" />
-                                            Edit
-                                          </DropdownMenuItem>
-                                          <DropdownMenuItem
-                                            className="text-red-600"
-                                            onClick={() => deleteChecklistItem(item.id)}
-                                          >
-                                            <Trash2 className="h-4 w-4 mr-2" />
-                                            Delete
-                                          </DropdownMenuItem>
-                                        </DropdownMenuContent>
-                                      </DropdownMenu>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </CollapsibleContent>
-                        </div>
-                      </Collapsible>
-                    )
-                  })
-                )}
-              </CardContent>
-            </Card>
+            <BOQChecklistsTab
+              headlineId={headlineId}
+              lineItems={lineItems.map(li => ({
+                id: li.id,
+                item_number: li.item_number,
+                description: li.description,
+                location: li.location,
+                unit: li.unit,
+                quantity: li.quantity,
+              }))}
+            />
           </TabsContent>
         </Tabs>
 
