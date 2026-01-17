@@ -14,6 +14,7 @@ import {
   BarChart3,
   Settings,
   Table2,
+  CheckSquare,
 } from 'lucide-react'
 
 const navigation = [
@@ -25,6 +26,7 @@ const navigation = [
   { name: 'Compliance', href: '/compliance', icon: ClipboardCheck },
   { name: 'Checklists', href: '/checklists', icon: ClipboardCheck },
   { name: 'JMR', href: '/jmr', icon: FileText },
+  { name: 'Billing Readiness', href: '/billing-readiness', icon: CheckSquare },
   { name: 'Billing', href: '/billing', icon: Receipt },
   { name: 'Reports', href: '/reports', icon: BarChart3 },
 ]
