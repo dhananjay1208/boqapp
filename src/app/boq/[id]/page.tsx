@@ -1572,7 +1572,7 @@ export default function BOQDetailPage() {
           <TabsContent value="checklists">
             <BOQChecklistsTab
               headlineId={headlineId}
-              lineItems={lineItems.map(li => ({
+              lineItems={lineItemsWithMaterials.map(li => ({
                 id: li.id,
                 item_number: li.item_number,
                 description: li.description,
