@@ -36,6 +36,12 @@ import {
   TabsTrigger,
 } from '@/components/ui/tabs'
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
+import { Badge } from '@/components/ui/badge'
+import {
   ArrowLeft,
   FileSpreadsheet,
   Plus,
@@ -46,6 +52,10 @@ import {
   Building2,
   ClipboardCheck,
   FileText,
+  Flame,
+  ChevronDown,
+  ChevronRight,
+  Calendar,
 } from 'lucide-react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
@@ -79,6 +89,8 @@ interface BOQLineItem {
   unit: string
   quantity: number
   status: string
+  checklist_status: string
+  jmr_status: string
 }
 
 
@@ -104,6 +116,26 @@ interface ChecklistWithItems extends Checklist {
   items: ChecklistItem[]
 }
 
+interface Consumption {
+  id: string
+  line_item_id: string
+  site_id: string
+  material_id: string
+  material_name: string
+  consumption_date: string
+  quantity: number
+  unit: string
+  notes: string | null
+  created_at: string
+}
+
+interface AvailableInventoryItem {
+  material_id: string
+  material_name: string
+  unit: string
+  available_quantity: number
+}
+
 
 const emptyLineItem = {
   item_number: '',
@@ -122,6 +154,34 @@ const emptyChecklistItem = {
   activity_name: '',
   notes: '',
 }
+
+const emptyConsumption = {
+  consumption_date: new Date().toISOString().split('T')[0],
+  material_id: '',
+  quantity: 0,
+  notes: '',
+}
+
+// Checklist status options
+const checklistStatusOptions = [
+  { value: 'not_applicable', label: 'Not Applicable', color: 'bg-gray-100 text-gray-600' },
+  { value: 'pending', label: 'Pending', color: 'bg-slate-100 text-slate-700' },
+  { value: 'created', label: 'Created', color: 'bg-blue-100 text-blue-700' },
+  { value: 'in_progress', label: 'In Progress', color: 'bg-amber-100 text-amber-700' },
+  { value: 'completed', label: 'Completed', color: 'bg-green-100 text-green-700' },
+  { value: 'approved', label: 'Approved', color: 'bg-emerald-100 text-emerald-700' },
+  { value: 'uploaded', label: 'Uploaded', color: 'bg-purple-100 text-purple-700' },
+]
+
+// JMR status options
+const jmrStatusOptions = [
+  { value: 'not_applicable', label: 'Not Applicable', color: 'bg-gray-100 text-gray-600' },
+  { value: 'pending', label: 'Pending', color: 'bg-slate-100 text-slate-700' },
+  { value: 'in_progress', label: 'In Progress', color: 'bg-amber-100 text-amber-700' },
+  { value: 'completed', label: 'Completed', color: 'bg-green-100 text-green-700' },
+  { value: 'approved', label: 'Approved', color: 'bg-emerald-100 text-emerald-700' },
+  { value: 'uploaded', label: 'Uploaded', color: 'bg-purple-100 text-purple-700' },
+]
 
 export default function BOQDetailPage() {
   const params = useParams()
@@ -151,6 +211,16 @@ export default function BOQDetailPage() {
   const [editingChecklistItem, setEditingChecklistItem] = useState<ChecklistItem | null>(null)
   const [checklistItemFormData, setChecklistItemFormData] = useState(emptyChecklistItem)
   const [selectedChecklistId, setSelectedChecklistId] = useState<string>('')
+
+  // Consumption State
+  const [consumptionDialogOpen, setConsumptionDialogOpen] = useState(false)
+  const [selectedLineItemForConsumption, setSelectedLineItemForConsumption] = useState<BOQLineItem | null>(null)
+  const [consumptionFormData, setConsumptionFormData] = useState(emptyConsumption)
+  const [availableInventory, setAvailableInventory] = useState<AvailableInventoryItem[]>([])
+  const [consumptions, setConsumptions] = useState<Consumption[]>([])
+  const [editingConsumption, setEditingConsumption] = useState<Consumption | null>(null)
+  const [loadingInventory, setLoadingInventory] = useState(false)
+  const [expandedConsumptions, setExpandedConsumptions] = useState<Set<string>>(new Set())
 
   const [saving, setSaving] = useState(false)
 
@@ -212,6 +282,22 @@ export default function BOQDetailPage() {
         setChecklists(checklistsWithItems)
       } else {
         setChecklists([])
+      }
+
+      // Fetch consumptions for all line items in this headline
+      if (lineItemsData && lineItemsData.length > 0) {
+        const lineItemIds = lineItemsData.map(li => li.id)
+        const { data: consumptionsData, error: consumptionsError } = await supabase
+          .from('material_consumption')
+          .select('*')
+          .in('line_item_id', lineItemIds)
+          .order('consumption_date', { ascending: false })
+
+        if (consumptionsError) {
+          console.error('Error fetching consumptions:', consumptionsError)
+        } else {
+          setConsumptions(consumptionsData || [])
+        }
       }
     } catch (error) {
       console.error('Error fetching data:', error)
@@ -528,6 +614,244 @@ export default function BOQDetailPage() {
     }
   }
 
+  // Consumption functions
+  async function fetchAvailableInventory(siteId: string) {
+    setLoadingInventory(true)
+    try {
+      // Fetch all GRN entries for the site
+      const { data: grnData, error: grnError } = await supabase
+        .from('material_grn')
+        .select('material_id, material_name, quantity, unit')
+        .eq('site_id', siteId)
+
+      if (grnError) throw grnError
+
+      // Fetch all consumption entries for the site
+      const { data: consumptionData, error: consumptionError } = await supabase
+        .from('material_consumption')
+        .select('material_id, quantity')
+        .eq('site_id', siteId)
+
+      if (consumptionError) throw consumptionError
+
+      // Aggregate GRN quantities
+      const grnTotals: { [key: string]: { material_name: string; unit: string; quantity: number } } = {}
+      ;(grnData || []).forEach(grn => {
+        if (!grnTotals[grn.material_id]) {
+          grnTotals[grn.material_id] = {
+            material_name: grn.material_name,
+            unit: grn.unit,
+            quantity: 0
+          }
+        }
+        grnTotals[grn.material_id].quantity += parseFloat(grn.quantity) || 0
+      })
+
+      // Aggregate consumption quantities
+      const consumptionTotals: { [key: string]: number } = {}
+      ;(consumptionData || []).forEach(c => {
+        consumptionTotals[c.material_id] = (consumptionTotals[c.material_id] || 0) + (parseFloat(c.quantity) || 0)
+      })
+
+      // Calculate available inventory
+      const available: AvailableInventoryItem[] = []
+      Object.keys(grnTotals).forEach(materialId => {
+        const received = grnTotals[materialId].quantity
+        const consumed = consumptionTotals[materialId] || 0
+        const availableQty = received - consumed
+
+        if (availableQty > 0) {
+          available.push({
+            material_id: materialId,
+            material_name: grnTotals[materialId].material_name,
+            unit: grnTotals[materialId].unit,
+            available_quantity: availableQty
+          })
+        }
+      })
+
+      // Sort by material name
+      available.sort((a, b) => a.material_name.localeCompare(b.material_name))
+      setAvailableInventory(available)
+    } catch (error) {
+      console.error('Error fetching inventory:', error)
+      toast.error('Failed to load available inventory')
+    } finally {
+      setLoadingInventory(false)
+    }
+  }
+
+  function openConsumptionDialog(lineItem: BOQLineItem) {
+    setSelectedLineItemForConsumption(lineItem)
+    setEditingConsumption(null)
+    setConsumptionFormData({
+      ...emptyConsumption,
+      consumption_date: new Date().toISOString().split('T')[0]
+    })
+    setConsumptionDialogOpen(true)
+
+    // Fetch available inventory for the site
+    if (headline?.packages?.sites?.id) {
+      fetchAvailableInventory(headline.packages.sites.id)
+    }
+  }
+
+  function openEditConsumptionDialog(consumption: Consumption) {
+    const lineItem = lineItems.find(li => li.id === consumption.line_item_id)
+    if (lineItem) {
+      setSelectedLineItemForConsumption(lineItem)
+    }
+    setEditingConsumption(consumption)
+    setConsumptionFormData({
+      consumption_date: consumption.consumption_date,
+      material_id: consumption.material_id,
+      quantity: consumption.quantity,
+      notes: consumption.notes || ''
+    })
+    setConsumptionDialogOpen(true)
+
+    // Fetch available inventory for the site
+    if (headline?.packages?.sites?.id) {
+      fetchAvailableInventory(headline.packages.sites.id)
+    }
+  }
+
+  async function handleSaveConsumption(e: React.FormEvent) {
+    e.preventDefault()
+
+    if (!consumptionFormData.material_id) {
+      toast.error('Please select a material')
+      return
+    }
+
+    if (consumptionFormData.quantity <= 0) {
+      toast.error('Quantity must be greater than 0')
+      return
+    }
+
+    // Validate quantity against available inventory
+    const selectedMaterial = availableInventory.find(i => i.material_id === consumptionFormData.material_id)
+    if (selectedMaterial) {
+      // For editing, we need to add back the original quantity to the available
+      let availableForValidation = selectedMaterial.available_quantity
+      if (editingConsumption && editingConsumption.material_id === consumptionFormData.material_id) {
+        availableForValidation += editingConsumption.quantity
+      }
+
+      if (consumptionFormData.quantity > availableForValidation) {
+        toast.error(`Cannot consume more than available (${availableForValidation.toLocaleString('en-IN', { maximumFractionDigits: 3 })} ${selectedMaterial.unit})`)
+        return
+      }
+    }
+
+    setSaving(true)
+
+    try {
+      const selectedMaterial = availableInventory.find(i => i.material_id === consumptionFormData.material_id)
+
+      if (editingConsumption) {
+        const { error } = await supabase
+          .from('material_consumption')
+          .update({
+            consumption_date: consumptionFormData.consumption_date,
+            material_id: consumptionFormData.material_id,
+            material_name: selectedMaterial?.material_name || '',
+            quantity: consumptionFormData.quantity,
+            unit: selectedMaterial?.unit || '',
+            notes: consumptionFormData.notes || null
+          })
+          .eq('id', editingConsumption.id)
+
+        if (error) throw error
+        toast.success('Consumption record updated')
+      } else {
+        const { error } = await supabase
+          .from('material_consumption')
+          .insert({
+            line_item_id: selectedLineItemForConsumption?.id,
+            site_id: headline?.packages?.sites?.id,
+            material_id: consumptionFormData.material_id,
+            material_name: selectedMaterial?.material_name || '',
+            consumption_date: consumptionFormData.consumption_date,
+            quantity: consumptionFormData.quantity,
+            unit: selectedMaterial?.unit || '',
+            notes: consumptionFormData.notes || null
+          })
+
+        if (error) throw error
+        toast.success('Consumption recorded')
+      }
+
+      setConsumptionDialogOpen(false)
+      fetchData()
+    } catch (error) {
+      console.error('Error saving consumption:', error)
+      toast.error('Failed to save consumption')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function deleteConsumption(id: string) {
+    if (!confirm('Delete this consumption record?')) {
+      return
+    }
+
+    try {
+      const { error } = await supabase
+        .from('material_consumption')
+        .delete()
+        .eq('id', id)
+
+      if (error) throw error
+      toast.success('Consumption deleted')
+      fetchData()
+    } catch (error) {
+      console.error('Error deleting consumption:', error)
+      toast.error('Failed to delete consumption')
+    }
+  }
+
+  function toggleConsumptionExpand(lineItemId: string) {
+    const newExpanded = new Set(expandedConsumptions)
+    if (newExpanded.has(lineItemId)) {
+      newExpanded.delete(lineItemId)
+    } else {
+      newExpanded.add(lineItemId)
+    }
+    setExpandedConsumptions(newExpanded)
+  }
+
+  function getConsumptionsForLineItem(lineItemId: string) {
+    return consumptions.filter(c => c.line_item_id === lineItemId)
+  }
+
+  async function updateLineItemStatus(lineItemId: string, field: 'checklist_status' | 'jmr_status', value: string) {
+    try {
+      const { error } = await supabase
+        .from('boq_line_items')
+        .update({ [field]: value })
+        .eq('id', lineItemId)
+
+      if (error) throw error
+
+      // Update local state
+      setLineItems(items =>
+        items.map(item =>
+          item.id === lineItemId ? { ...item, [field]: value } : item
+        )
+      )
+      toast.success('Status updated')
+    } catch (error) {
+      console.error('Error updating status:', error)
+      toast.error('Failed to update status')
+    }
+  }
+
+  function getStatusOption(options: typeof checklistStatusOptions, value: string) {
+    return options.find(opt => opt.value === value) || options[1] // Default to 'pending'
+  }
+
   const statusColors: Record<string, string> = {
     pending: 'bg-slate-100 text-slate-700',
     in_progress: 'bg-blue-100 text-blue-700',
@@ -667,49 +991,184 @@ export default function BOQDetailPage() {
                     </Button>
                   </div>
                 ) : (
-                  lineItems.map((lineItem) => (
-                    <div key={lineItem.id} className="border rounded-lg p-4 bg-slate-50">
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className="font-mono font-medium text-blue-600">{lineItem.item_number}</span>
+                  lineItems.map((lineItem) => {
+                    const lineItemConsumptions = getConsumptionsForLineItem(lineItem.id)
+                    return (
+                    <div key={lineItem.id} className="border rounded-lg bg-slate-50">
+                      <div className="p-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="font-mono font-medium text-blue-600">{lineItem.item_number}</span>
+                            </div>
+                            <p className="text-sm text-slate-700 mb-2">
+                              {lineItem.description}
+                            </p>
+                            <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
+                              <span className="font-medium">{lineItem.quantity} {lineItem.unit}</span>
+                              {lineItem.location && (
+                                <span className="flex items-center gap-1">
+                                  <Building2 className="h-3 w-3" />
+                                  {lineItem.location}
+                                </span>
+                              )}
+                              {lineItemConsumptions.length > 0 && (
+                                <Badge variant="secondary" className="text-xs">
+                                  <Flame className="h-3 w-3 mr-1" />
+                                  {lineItemConsumptions.length} consumption{lineItemConsumptions.length !== 1 ? 's' : ''}
+                                </Badge>
+                              )}
+                            </div>
+                            {/* Progress Status Row */}
+                            <div className="flex flex-wrap items-center gap-4 mt-3 pt-3 border-t border-slate-200">
+                              <div className="flex items-center gap-2">
+                                <ClipboardCheck className="h-4 w-4 text-slate-400" />
+                                <span className="text-xs text-slate-500 font-medium">Checklist:</span>
+                                <Select
+                                  value={lineItem.checklist_status || 'pending'}
+                                  onValueChange={(value) => updateLineItemStatus(lineItem.id, 'checklist_status', value)}
+                                >
+                                  <SelectTrigger className="h-7 w-[130px] text-xs">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {checklistStatusOptions.map((option) => (
+                                      <SelectItem key={option.value} value={option.value}>
+                                        <span className={`px-1.5 py-0.5 rounded text-xs ${option.color}`}>
+                                          {option.label}
+                                        </span>
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <FileText className="h-4 w-4 text-slate-400" />
+                                <span className="text-xs text-slate-500 font-medium">JMR:</span>
+                                <Select
+                                  value={lineItem.jmr_status || 'pending'}
+                                  onValueChange={(value) => updateLineItemStatus(lineItem.id, 'jmr_status', value)}
+                                >
+                                  <SelectTrigger className="h-7 w-[130px] text-xs">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {jmrStatusOptions.map((option) => (
+                                      <SelectItem key={option.value} value={option.value}>
+                                        <span className={`px-1.5 py-0.5 rounded text-xs ${option.color}`}>
+                                          {option.label}
+                                        </span>
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
                           </div>
-                          <p className="text-sm text-slate-700 mb-2">
-                            {lineItem.description}
-                          </p>
-                          <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
-                            <span className="font-medium">{lineItem.quantity} {lineItem.unit}</span>
-                            {lineItem.location && (
-                              <span className="flex items-center gap-1">
-                                <Building2 className="h-3 w-3" />
-                                {lineItem.location}
-                              </span>
-                            )}
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-orange-600 border-orange-200 hover:bg-orange-50 hover:text-orange-700"
+                              onClick={() => openConsumptionDialog(lineItem)}
+                            >
+                              <Flame className="h-4 w-4 mr-1.5" />
+                              Record Consumption
+                            </Button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onClick={() => openEditLineItemDialog(lineItem)}>
+                                  <Pencil className="h-4 w-4 mr-2" />
+                                  Edit
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  className="text-red-600"
+                                  onClick={() => deleteLineItem(lineItem.id)}
+                                >
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Delete
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         </div>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => openEditLineItemDialog(lineItem)}>
-                              <Pencil className="h-4 w-4 mr-2" />
-                              Edit
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="text-red-600"
-                              onClick={() => deleteLineItem(lineItem.id)}
-                            >
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
                       </div>
+
+                      {/* Consumption History */}
+                      {lineItemConsumptions.length > 0 && (
+                        <Collapsible
+                          open={expandedConsumptions.has(lineItem.id)}
+                          onOpenChange={() => toggleConsumptionExpand(lineItem.id)}
+                        >
+                          <CollapsibleTrigger asChild>
+                            <div className="border-t px-4 py-2 cursor-pointer hover:bg-slate-100 transition-colors flex items-center justify-between">
+                              <span className="text-sm font-medium text-slate-600 flex items-center gap-2">
+                                {expandedConsumptions.has(lineItem.id) ? (
+                                  <ChevronDown className="h-4 w-4" />
+                                ) : (
+                                  <ChevronRight className="h-4 w-4" />
+                                )}
+                                Consumption History
+                              </span>
+                              <Badge variant="outline" className="text-xs">
+                                {lineItemConsumptions.length} record{lineItemConsumptions.length !== 1 ? 's' : ''}
+                              </Badge>
+                            </div>
+                          </CollapsibleTrigger>
+                          <CollapsibleContent>
+                            <div className="px-4 pb-4 space-y-2">
+                              {lineItemConsumptions.map((consumption) => (
+                                <div
+                                  key={consumption.id}
+                                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-white border rounded-md"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <div className="font-medium text-sm">{consumption.material_name}</div>
+                                    <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 mt-1">
+                                      <span className="flex items-center gap-1">
+                                        <Calendar className="h-3 w-3" />
+                                        {new Date(consumption.consumption_date).toLocaleDateString('en-IN')}
+                                      </span>
+                                      <span className="font-semibold text-orange-600">
+                                        {consumption.quantity.toLocaleString('en-IN', { maximumFractionDigits: 3 })} {consumption.unit}
+                                      </span>
+                                    </div>
+                                    {consumption.notes && (
+                                      <p className="text-xs text-slate-500 mt-1">{consumption.notes}</p>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8"
+                                      onClick={() => openEditConsumptionDialog(consumption)}
+                                    >
+                                      <Pencil className="h-3 w-3" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 text-red-600 hover:text-red-700"
+                                      onClick={() => deleteConsumption(consumption.id)}
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </CollapsibleContent>
+                        </Collapsible>
+                      )}
                     </div>
-                  ))
+                  )
+                  })
                 )}
               </CardContent>
             </Card>
@@ -744,17 +1203,6 @@ export default function BOQDetailPage() {
           </TabsContent>
         </Tabs>
 
-        {/* Related Actions */}
-        <Card>
-          <CardHeader>
-            <CardTitle>Related Actions</CardTitle>
-          </CardHeader>
-          <CardContent className="flex flex-wrap gap-3">
-            <Link href={`/jmr?headline=${headlineId}`}>
-              <Button variant="outline">Create JMR</Button>
-            </Link>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Line Item Dialog */}
@@ -906,6 +1354,115 @@ export default function BOQDetailPage() {
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setChecklistItemDialogOpen(false)}>Cancel</Button>
               <Button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Save'}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Consumption Dialog */}
+      <Dialog open={consumptionDialogOpen} onOpenChange={setConsumptionDialogOpen}>
+        <DialogContent className="max-w-md">
+          <form onSubmit={handleSaveConsumption}>
+            <DialogHeader>
+              <DialogTitle>{editingConsumption ? 'Edit Consumption' : 'Record Consumption'}</DialogTitle>
+              <DialogDescription>
+                {selectedLineItemForConsumption && (
+                  <span className="block mt-1">
+                    For: <span className="font-medium">{selectedLineItemForConsumption.item_number}</span> - {selectedLineItemForConsumption.description.substring(0, 50)}...
+                  </span>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="consumption_date">Date *</Label>
+                <Input
+                  id="consumption_date"
+                  type="date"
+                  value={consumptionFormData.consumption_date}
+                  onChange={(e) => setConsumptionFormData({ ...consumptionFormData, consumption_date: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="material">Material *</Label>
+                {loadingInventory ? (
+                  <div className="text-sm text-slate-500 py-2">Loading available materials...</div>
+                ) : availableInventory.length === 0 ? (
+                  <div className="text-sm text-slate-500 py-2 bg-amber-50 border border-amber-200 rounded-md px-3">
+                    No materials available in inventory for this site. Record materials via GRN first.
+                  </div>
+                ) : (
+                  <Select
+                    value={consumptionFormData.material_id}
+                    onValueChange={(value) => setConsumptionFormData({ ...consumptionFormData, material_id: value, quantity: 0 })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select material" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableInventory.map((item) => (
+                        <SelectItem key={item.material_id} value={item.material_id}>
+                          <div className="flex justify-between items-center w-full">
+                            <span className="truncate">{item.material_name}</span>
+                            <span className="text-xs text-slate-500 ml-2">
+                              ({item.available_quantity.toLocaleString('en-IN', { maximumFractionDigits: 3 })} {item.unit})
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+              {consumptionFormData.material_id && (
+                <div className="space-y-2">
+                  <Label htmlFor="consumption_quantity">
+                    Quantity *
+                    {(() => {
+                      const selected = availableInventory.find(i => i.material_id === consumptionFormData.material_id)
+                      if (selected) {
+                        let availableForDisplay = selected.available_quantity
+                        if (editingConsumption && editingConsumption.material_id === consumptionFormData.material_id) {
+                          availableForDisplay += editingConsumption.quantity
+                        }
+                        return (
+                          <span className="text-xs text-slate-500 ml-2">
+                            (Available: {availableForDisplay.toLocaleString('en-IN', { maximumFractionDigits: 3 })} {selected.unit})
+                          </span>
+                        )
+                      }
+                      return null
+                    })()}
+                  </Label>
+                  <Input
+                    id="consumption_quantity"
+                    type="number"
+                    step="0.001"
+                    min="0.001"
+                    value={consumptionFormData.quantity || ''}
+                    onChange={(e) => setConsumptionFormData({ ...consumptionFormData, quantity: parseFloat(e.target.value) || 0 })}
+                    placeholder="Enter quantity"
+                    required
+                  />
+                </div>
+              )}
+              <div className="space-y-2">
+                <Label htmlFor="consumption_notes">Notes (Optional)</Label>
+                <Textarea
+                  id="consumption_notes"
+                  placeholder="Any additional details..."
+                  value={consumptionFormData.notes}
+                  onChange={(e) => setConsumptionFormData({ ...consumptionFormData, notes: e.target.value })}
+                  rows={2}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setConsumptionDialogOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={saving || !consumptionFormData.material_id || consumptionFormData.quantity <= 0}>
+                {saving ? 'Saving...' : 'Save'}
+              </Button>
             </DialogFooter>
           </form>
         </DialogContent>

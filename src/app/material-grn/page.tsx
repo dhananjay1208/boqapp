@@ -71,7 +71,9 @@ import {
   Check,
   ChevronsUpDown,
   Camera,
+  Download,
 } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -556,6 +558,72 @@ export default function MaterialGRNPage() {
     }
   }
 
+  function getDocStatus(docs: GRNComplianceDoc[], docType: string): string {
+    const doc = docs.find(d => d.document_type === docType)
+    if (!doc) return 'N'
+    if (!doc.is_applicable) return 'NA'
+    if (doc.is_uploaded) return 'Y'
+    return 'N'
+  }
+
+  function exportToExcel() {
+    if (grnList.length === 0) {
+      toast.error('No data to export')
+      return
+    }
+
+    const siteName = sites.find(s => s.id === selectedSiteId)?.name || 'Unknown Site'
+
+    // Prepare data for export
+    const exportData = grnList.map((grn, index) => ({
+      'S.No': index + 1,
+      'Date': new Date(grn.grn_date).toLocaleDateString('en-IN'),
+      'Material': grn.material_name,
+      'Vendor': grn.vendor_name,
+      'Invoice No.': grn.invoice_number || '',
+      'Invoice Amount (₹)': grn.invoice_amount || '',
+      'Quantity': grn.quantity,
+      'Unit': grn.unit,
+      'DC': getDocStatus(grn.compliance_docs, 'dc'),
+      'MIR': getDocStatus(grn.compliance_docs, 'mir'),
+      'Test Certificate': getDocStatus(grn.compliance_docs, 'test_certificate'),
+      'TDS': getDocStatus(grn.compliance_docs, 'tds'),
+      'Notes': grn.notes || '',
+    }))
+
+    // Create workbook and worksheet
+    const wb = XLSX.utils.book_new()
+    const ws = XLSX.utils.json_to_sheet(exportData)
+
+    // Set column widths
+    ws['!cols'] = [
+      { wch: 6 },   // S.No
+      { wch: 12 },  // Date
+      { wch: 30 },  // Material
+      { wch: 20 },  // Vendor
+      { wch: 15 },  // Invoice No
+      { wch: 15 },  // Invoice Amount
+      { wch: 10 },  // Quantity
+      { wch: 8 },   // Unit
+      { wch: 6 },   // DC
+      { wch: 6 },   // MIR
+      { wch: 15 }, // Test Certificate
+      { wch: 6 },   // TDS
+      { wch: 30 },  // Notes
+    ]
+
+    // Add worksheet to workbook
+    XLSX.utils.book_append_sheet(wb, ws, 'MIR Report')
+
+    // Generate filename with site name and date
+    const dateStr = new Date().toISOString().split('T')[0]
+    const filename = `MIR_Report_${siteName.replace(/[^a-zA-Z0-9]/g, '_')}_${dateStr}.xlsx`
+
+    // Download file
+    XLSX.writeFile(wb, filename)
+    toast.success('MIR Report exported successfully')
+  }
+
   // Filter materials for search
   const filteredMaterials = masterMaterials.filter(m =>
     m.name.toLowerCase().includes(materialSearchTerm.toLowerCase()) ||
@@ -608,6 +676,15 @@ export default function MaterialGRNPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                <Button
+                  variant="outline"
+                  onClick={exportToExcel}
+                  disabled={!selectedSiteId || grnList.length === 0}
+                  className="w-full sm:w-auto"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Export MIR Report
+                </Button>
                 <Button onClick={openCreateDialog} disabled={!selectedSiteId} className="w-full sm:w-auto">
                   <Plus className="h-4 w-4 mr-2" />
                   Add GRN

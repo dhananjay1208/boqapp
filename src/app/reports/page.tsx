@@ -1,0 +1,27 @@
+'use client'
+
+import { Construction } from 'lucide-react'
+import { Card, CardContent } from '@/components/ui/card'
+
+export default function ReportsPage() {
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-semibold text-slate-900">Reports</h1>
+        <p className="text-slate-600 mt-1">Generate and view reports</p>
+      </div>
+
+      <Card className="border-dashed">
+        <CardContent className="flex flex-col items-center justify-center py-16">
+          <div className="h-16 w-16 rounded-full bg-amber-100 flex items-center justify-center mb-4">
+            <Construction className="h-8 w-8 text-amber-600" />
+          </div>
+          <h2 className="text-xl font-semibold text-slate-900 mb-2">Under Construction</h2>
+          <p className="text-slate-500 text-center max-w-md">
+            This page is currently under development. Please check back later for reporting features.
+          </p>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}

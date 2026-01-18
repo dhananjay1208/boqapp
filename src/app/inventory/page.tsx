@@ -43,7 +43,9 @@ interface InventoryItem {
   material_name: string
   category: string
   unit: string
-  total_quantity: number
+  received_quantity: number
+  consumed_quantity: number
+  available_quantity: number
   last_receipt_date: string
   receipt_count: number
 }
@@ -115,6 +117,16 @@ export default function InventoryPage() {
 
       if (grnError) throw grnError
 
+      // Fetch all consumption entries for the selected site
+      const { data: consumptionData, error: consumptionError } = await supabase
+        .from('material_consumption')
+        .select('material_id, quantity')
+        .eq('site_id', selectedSiteId)
+
+      if (consumptionError) {
+        console.error('Error fetching consumption data:', consumptionError)
+      }
+
       // Fetch material categories from master_materials
       const materialIds = [...new Set((grnData || []).map(g => g.material_id))]
 
@@ -135,7 +147,13 @@ export default function InventoryPage() {
         }
       }
 
-      // Aggregate quantities by material
+      // Aggregate consumption quantities by material
+      const consumptionTotals: { [key: string]: number } = {}
+      ;(consumptionData || []).forEach(c => {
+        consumptionTotals[c.material_id] = (consumptionTotals[c.material_id] || 0) + (parseFloat(c.quantity) || 0)
+      })
+
+      // Aggregate GRN quantities by material
       const aggregated: { [key: string]: InventoryItem } = {}
 
       ;(grnData || []).forEach(grn => {
@@ -145,18 +163,27 @@ export default function InventoryPage() {
             material_name: grn.material_name,
             category: materialCategories[grn.material_id] || 'Uncategorized',
             unit: grn.unit,
-            total_quantity: 0,
+            received_quantity: 0,
+            consumed_quantity: 0,
+            available_quantity: 0,
             last_receipt_date: grn.grn_date,
             receipt_count: 0,
           }
         }
-        aggregated[grn.material_id].total_quantity += parseFloat(grn.quantity) || 0
+        aggregated[grn.material_id].received_quantity += parseFloat(grn.quantity) || 0
         aggregated[grn.material_id].receipt_count += 1
 
         // Keep track of most recent receipt date
         if (grn.grn_date > aggregated[grn.material_id].last_receipt_date) {
           aggregated[grn.material_id].last_receipt_date = grn.grn_date
         }
+      })
+
+      // Calculate consumed and available quantities
+      Object.keys(aggregated).forEach(materialId => {
+        aggregated[materialId].consumed_quantity = consumptionTotals[materialId] || 0
+        aggregated[materialId].available_quantity =
+          aggregated[materialId].received_quantity - aggregated[materialId].consumed_quantity
       })
 
       const inventoryList = Object.values(aggregated).sort((a, b) =>
@@ -399,9 +426,21 @@ export default function InventoryPage() {
                                 </span>
                               </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                              <Badge className="bg-blue-100 text-blue-700 hover:bg-blue-100">
-                                {item.total_quantity.toLocaleString('en-IN', { maximumFractionDigits: 3 })} {item.unit}
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge variant="outline" className="text-xs">
+                                Received: {item.received_quantity.toLocaleString('en-IN', { maximumFractionDigits: 3 })}
+                              </Badge>
+                              {item.consumed_quantity > 0 && (
+                                <Badge variant="outline" className="text-xs text-orange-600 border-orange-300">
+                                  Used: {item.consumed_quantity.toLocaleString('en-IN', { maximumFractionDigits: 3 })}
+                                </Badge>
+                              )}
+                              <Badge className={cn(
+                                item.available_quantity > 0
+                                  ? "bg-green-100 text-green-700 hover:bg-green-100"
+                                  : "bg-red-100 text-red-700 hover:bg-red-100"
+                              )}>
+                                Available: {item.available_quantity.toLocaleString('en-IN', { maximumFractionDigits: 3 })} {item.unit}
                               </Badge>
                             </div>
                           </div>

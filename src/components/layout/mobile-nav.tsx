@@ -14,35 +14,39 @@ import {
   LayoutDashboard,
   Building2,
   FileSpreadsheet,
-  Package,
   ClipboardCheck,
   Receipt,
   BarChart3,
   Settings,
-  Table2,
-  CheckSquare,
   Database,
   ChevronDown,
   ChevronRight,
   ListTree,
   Warehouse,
+  Truck,
+  Users,
+  Wallet,
+  PieChart,
+  TrendingUp,
 } from 'lucide-react'
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Sites', href: '/sites', icon: Building2 },
-  { name: 'BOQ', href: '/boq', icon: FileSpreadsheet },
+  { name: 'BOQ Management', href: '/boq', icon: FileSpreadsheet },
+  { name: 'BOQ Progress', href: '/boq-progress', icon: TrendingUp },
   { name: 'Material GRN', href: '/material-grn', icon: Receipt },
   { name: 'Inventory', href: '/inventory', icon: Warehouse },
-  { name: 'MIR View', href: '/mir-view', icon: Table2 },
-  { name: 'Materials', href: '/materials', icon: Package },
+  { name: 'Expenses Recording', href: '/expenses', icon: Wallet },
+  { name: 'Expense Dashboard', href: '/expense-dashboard', icon: PieChart },
   { name: 'Checklists', href: '/checklists', icon: ClipboardCheck },
-  { name: 'Billing Readiness', href: '/billing-readiness', icon: CheckSquare },
   { name: 'Reports', href: '/reports', icon: BarChart3 },
 ]
 
 const masterDataItems = [
   { name: 'Material List', href: '/master-data/materials', icon: ListTree },
+  { name: 'Equipment', href: '/master-data/equipment', icon: Truck },
+  { name: 'Manpower', href: '/master-data/manpower', icon: Users },
 ]
 
 interface MobileNavProps {
@@ -69,7 +73,7 @@ export function MobileNav({ open, onOpenChange }: MobileNavProps) {
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {navigation.map((item) => {
             const isActive = pathname === item.href ||
-              (item.href !== '/' && pathname.startsWith(item.href))
+              (item.href !== '/' && pathname.startsWith(item.href + '/'))
 
             return (
               <Link

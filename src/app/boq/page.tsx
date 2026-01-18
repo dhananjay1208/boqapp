@@ -79,8 +79,8 @@ function BOQContent() {
   const [packages, setPackages] = useState<PackageData[]>([])
   const [headlines, setHeadlines] = useState<BOQHeadline[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedSite, setSelectedSite] = useState<string>(siteFilter || 'all')
-  const [selectedPackage, setSelectedPackage] = useState<string>(packageFilter || 'all')
+  const [selectedSite, setSelectedSite] = useState<string>(siteFilter || '')
+  const [selectedPackage, setSelectedPackage] = useState<string>(packageFilter || '')
 
   useEffect(() => {
     fetchData()
@@ -113,6 +113,13 @@ function BOQContent() {
   }
 
   async function fetchHeadlines() {
+    // Don't fetch if no site is selected
+    if (!selectedSite) {
+      setHeadlines([])
+      setLoading(false)
+      return
+    }
+
     setLoading(true)
     try {
       let query = supabase
@@ -130,9 +137,9 @@ function BOQContent() {
         `)
         .order('serial_number')
 
-      if (selectedPackage && selectedPackage !== 'all') {
+      if (selectedPackage) {
         query = query.eq('package_id', selectedPackage)
-      } else if (selectedSite && selectedSite !== 'all') {
+      } else if (selectedSite) {
         // Get packages for this site first
         const sitePackages = packages.filter(p => p.site_id === selectedSite)
         const packageIds = sitePackages.map(p => p.id)
@@ -178,9 +185,9 @@ function BOQContent() {
     }
   }
 
-  const filteredPackages = selectedSite && selectedSite !== 'all'
+  const filteredPackages = selectedSite
     ? packages.filter(p => p.site_id === selectedSite)
-    : packages
+    : []
 
   const statusColors: Record<string, string> = {
     pending: 'bg-slate-100 text-slate-700',
@@ -226,13 +233,12 @@ function BOQContent() {
                 <label className="text-sm font-medium mb-1.5 block">Site</label>
                 <Select value={selectedSite} onValueChange={(value) => {
                   setSelectedSite(value)
-                  setSelectedPackage('all')
+                  setSelectedPackage('')
                 }}>
                   <SelectTrigger>
-                    <SelectValue placeholder="All Sites" />
+                    <SelectValue placeholder="Select a site" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All Sites</SelectItem>
                     {sites.map((site) => (
                       <SelectItem key={site.id} value={site.id}>
                         {site.name}
@@ -243,9 +249,13 @@ function BOQContent() {
               </div>
               <div className="flex-1">
                 <label className="text-sm font-medium mb-1.5 block">Package</label>
-                <Select value={selectedPackage} onValueChange={setSelectedPackage}>
+                <Select
+                  value={selectedPackage}
+                  onValueChange={setSelectedPackage}
+                  disabled={!selectedSite}
+                >
                   <SelectTrigger>
-                    <SelectValue placeholder="All Packages" />
+                    <SelectValue placeholder={selectedSite ? "All Packages" : "Select a site first"} />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Packages</SelectItem>
@@ -275,6 +285,14 @@ function BOQContent() {
           <CardContent>
             {loading ? (
               <div className="text-center py-8 text-slate-500">Loading BOQ data...</div>
+            ) : !selectedSite ? (
+              <div className="text-center py-12">
+                <Building2 className="h-12 w-12 mx-auto text-slate-300 mb-4" />
+                <h3 className="text-lg font-medium text-slate-900 mb-2">Select a Site</h3>
+                <p className="text-slate-500">
+                  Please select a site from the filter above to view BOQ items.
+                </p>
+              </div>
             ) : headlines.length === 0 ? (
               <div className="text-center py-12">
                 <FileSpreadsheet className="h-12 w-12 mx-auto text-slate-300 mb-4" />
