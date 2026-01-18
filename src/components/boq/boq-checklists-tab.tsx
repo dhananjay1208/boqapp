@@ -725,12 +725,19 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
 
   function getStatusBadge(status: string | null) {
     switch (status) {
-      case 'Y':
-        return <Badge className="bg-green-100 text-green-700"><CheckCircle2 className="h-3 w-3 mr-1" />Y</Badge>
-      case 'N':
-        return <Badge className="bg-red-100 text-red-700"><XCircle className="h-3 w-3 mr-1" />N</Badge>
+      case 'Done':
+        return <Badge className="bg-green-100 text-green-700"><CheckCircle2 className="h-3 w-3 mr-1" />Done</Badge>
+      case 'In Progress':
+        return <Badge className="bg-blue-100 text-blue-700"><MinusCircle className="h-3 w-3 mr-1" />In Progress</Badge>
+      case 'Pending':
+        return <Badge className="bg-amber-100 text-amber-700"><XCircle className="h-3 w-3 mr-1" />Pending</Badge>
       case 'NA':
         return <Badge className="bg-slate-100 text-slate-500"><MinusCircle className="h-3 w-3 mr-1" />NA</Badge>
+      // Legacy support for old Y/N values
+      case 'Y':
+        return <Badge className="bg-green-100 text-green-700"><CheckCircle2 className="h-3 w-3 mr-1" />Done</Badge>
+      case 'N':
+        return <Badge className="bg-amber-100 text-amber-700"><XCircle className="h-3 w-3 mr-1" />Pending</Badge>
       default:
         return <Badge variant="outline">-</Badge>
     }
@@ -837,7 +844,7 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
                           ) : (
                             <div className="space-y-2">
                               {lineItemChecklists.map((checklist) => {
-                                const completedItems = checklist.items?.filter(i => i.status === 'Y').length || 0
+                                const completedItems = checklist.items?.filter(i => i.status === 'Done' || i.status === 'Y').length || 0
                                 const totalItems = checklist.items?.length || 0
                                 return (
                                   <div
@@ -966,48 +973,49 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
 
                 {/* Checklist Items */}
                 <div>
-                  <Label className="mb-2 block">Checklist Items</Label>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="w-16">S.No</TableHead>
-                        <TableHead>Description</TableHead>
-                        <TableHead className="w-32">Status</TableHead>
-                        <TableHead className="w-48">Remarks</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {formItems.map((item, index) => (
-                        <TableRow key={index}>
-                          <TableCell>{item.item_no}</TableCell>
-                          <TableCell>{item.description}</TableCell>
-                          <TableCell>
-                            <Select
-                              value={item.status}
-                              onValueChange={(value) => updateItemStatus(index, value)}
-                            >
-                              <SelectTrigger className="h-8">
-                                <SelectValue placeholder="-" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="Y">Y</SelectItem>
-                                <SelectItem value="N">N</SelectItem>
-                                <SelectItem value="NA">NA</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              value={item.remarks}
-                              onChange={(e) => updateItemRemarks(index, e.target.value)}
-                              placeholder="Remarks"
-                              className="h-8"
-                            />
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  <Label className="mb-2 block">Checklist Items ({formItems.length})</Label>
+                  <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
+                    {formItems.map((item, index) => (
+                      <div key={index} className="border rounded-lg p-3 bg-slate-50">
+                        <div className="flex items-start gap-3">
+                          <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-sm font-medium min-w-[32px] text-center">
+                            {item.item_no}
+                          </span>
+                          <div className="flex-1 space-y-2">
+                            <p className="text-sm text-slate-700">{item.description}</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                              <div>
+                                <Label className="text-xs text-slate-500">Status</Label>
+                                <Select
+                                  value={item.status}
+                                  onValueChange={(value) => updateItemStatus(index, value)}
+                                >
+                                  <SelectTrigger className="h-9 mt-1">
+                                    <SelectValue placeholder="Select status" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="NA">NA</SelectItem>
+                                    <SelectItem value="Pending">Pending</SelectItem>
+                                    <SelectItem value="In Progress">In Progress</SelectItem>
+                                    <SelectItem value="Done">Done</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div>
+                                <Label className="text-xs text-slate-500">Remarks</Label>
+                                <Input
+                                  value={item.remarks}
+                                  onChange={(e) => updateItemRemarks(index, e.target.value)}
+                                  placeholder="Enter remarks..."
+                                  className="h-9 mt-1"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 {/* Notes */}
@@ -1185,48 +1193,49 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
 
             {/* Checklist Items */}
             <div>
-              <Label className="mb-2 block">Checklist Items</Label>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-16">S.No</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead className="w-32">Status</TableHead>
-                    <TableHead className="w-48">Remarks</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {formItems.map((item, index) => (
-                    <TableRow key={index}>
-                      <TableCell>{item.item_no}</TableCell>
-                      <TableCell>{item.description}</TableCell>
-                      <TableCell>
-                        <Select
-                          value={item.status}
-                          onValueChange={(value) => updateItemStatus(index, value)}
-                        >
-                          <SelectTrigger className="h-8">
-                            <SelectValue placeholder="-" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="Y">Y</SelectItem>
-                            <SelectItem value="N">N</SelectItem>
-                            <SelectItem value="NA">NA</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          value={item.remarks}
-                          onChange={(e) => updateItemRemarks(index, e.target.value)}
-                          placeholder="Remarks"
-                          className="h-8"
-                        />
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              <Label className="mb-2 block">Checklist Items ({formItems.length})</Label>
+              <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
+                {formItems.map((item, index) => (
+                  <div key={index} className="border rounded-lg p-3 bg-slate-50">
+                    <div className="flex items-start gap-3">
+                      <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-sm font-medium min-w-[32px] text-center">
+                        {item.item_no}
+                      </span>
+                      <div className="flex-1 space-y-2">
+                        <p className="text-sm text-slate-700">{item.description}</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          <div>
+                            <Label className="text-xs text-slate-500">Status</Label>
+                            <Select
+                              value={item.status}
+                              onValueChange={(value) => updateItemStatus(index, value)}
+                            >
+                              <SelectTrigger className="h-9 mt-1">
+                                <SelectValue placeholder="Select status" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="NA">NA</SelectItem>
+                                <SelectItem value="Pending">Pending</SelectItem>
+                                <SelectItem value="In Progress">In Progress</SelectItem>
+                                <SelectItem value="Done">Done</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label className="text-xs text-slate-500">Remarks</Label>
+                            <Input
+                              value={item.remarks}
+                              onChange={(e) => updateItemRemarks(index, e.target.value)}
+                              placeholder="Enter remarks..."
+                              className="h-9 mt-1"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
 
             {/* Notes */}
