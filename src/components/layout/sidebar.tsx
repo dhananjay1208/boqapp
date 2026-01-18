@@ -18,6 +18,7 @@ import {
   ChevronDown,
   ChevronRight,
   ListTree,
+  Receipt,
 } from 'lucide-react'
 
 interface NavItem {
@@ -36,6 +37,7 @@ const navigation: NavItem[] = [
   { name: 'Dashboard', href: '/', icon: LayoutDashboard },
   { name: 'Sites', href: '/sites', icon: Building2 },
   { name: 'BOQ', href: '/boq', icon: FileSpreadsheet },
+  { name: 'Material GRN', href: '/material-grn', icon: Receipt },
   { name: 'MIR View', href: '/mir-view', icon: Table2 },
   { name: 'Materials', href: '/materials', icon: Package },
   { name: 'Checklists', href: '/checklists', icon: ClipboardCheck },
