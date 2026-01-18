@@ -25,6 +25,7 @@ import {
   ChevronDown,
   ChevronRight,
   ListTree,
+  Warehouse,
 } from 'lucide-react'
 
 const navigation = [
@@ -32,6 +33,7 @@ const navigation = [
   { name: 'Sites', href: '/sites', icon: Building2 },
   { name: 'BOQ', href: '/boq', icon: FileSpreadsheet },
   { name: 'Material GRN', href: '/material-grn', icon: Receipt },
+  { name: 'Inventory', href: '/inventory', icon: Warehouse },
   { name: 'MIR View', href: '/mir-view', icon: Table2 },
   { name: 'Materials', href: '/materials', icon: Package },
   { name: 'Checklists', href: '/checklists', icon: ClipboardCheck },
