@@ -594,9 +594,9 @@ export default function MaterialGRNPage() {
                   Record material deliveries and manage compliance documents
                 </CardDescription>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
                 <Select value={selectedSiteId} onValueChange={setSelectedSiteId}>
-                  <SelectTrigger className="w-[200px]">
+                  <SelectTrigger className="w-full sm:w-[200px]">
                     <Building2 className="h-4 w-4 mr-2" />
                     <SelectValue placeholder="Select site" />
                   </SelectTrigger>
@@ -608,7 +608,7 @@ export default function MaterialGRNPage() {
                     ))}
                   </SelectContent>
                 </Select>
-                <Button onClick={openCreateDialog} disabled={!selectedSiteId}>
+                <Button onClick={openCreateDialog} disabled={!selectedSiteId} className="w-full sm:w-auto">
                   <Plus className="h-4 w-4 mr-2" />
                   Add GRN
                 </Button>
@@ -643,105 +643,183 @@ export default function MaterialGRNPage() {
             </CardContent>
           </Card>
         ) : (
-          <Card>
-            <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Material</TableHead>
-                    <TableHead>Vendor</TableHead>
-                    <TableHead>Invoice</TableHead>
-                    <TableHead className="text-right">Qty</TableHead>
-                    <TableHead>Compliance</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {grnList.map((grn) => {
-                    const compliance = getComplianceStatus(grn)
-                    const isComplete = compliance.completed === compliance.total && compliance.total > 0
+          <>
+            {/* Mobile Card View */}
+            <div className="md:hidden space-y-3">
+              {grnList.map((grn) => {
+                const compliance = getComplianceStatus(grn)
+                const isComplete = compliance.completed === compliance.total && compliance.total > 0
 
-                    return (
-                      <TableRow key={grn.id}>
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Calendar className="h-4 w-4 text-slate-400" />
-                            {new Date(grn.grn_date).toLocaleDateString('en-IN')}
-                          </div>
-                        </TableCell>
-                        <TableCell>
+                return (
+                  <Card key={grn.id}>
+                    <CardContent className="p-4">
+                      <div className="flex items-start justify-between gap-2 mb-3">
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-medium text-sm truncate">{grn.material_name}</h3>
+                          <p className="text-xs text-slate-500">{grn.vendor_name}</p>
+                        </div>
+                        <Badge variant="secondary" className="text-xs shrink-0">
+                          {grn.quantity} {grn.unit}
+                        </Badge>
+                      </div>
+
+                      <div className="flex items-center gap-4 text-xs text-slate-600 mb-3">
+                        <div className="flex items-center gap-1">
+                          <Calendar className="h-3 w-3" />
+                          {new Date(grn.grn_date).toLocaleDateString('en-IN')}
+                        </div>
+                        {grn.invoice_number && (
                           <div>
-                            <p className="font-medium">{grn.material_name}</p>
-                          </div>
-                        </TableCell>
-                        <TableCell>{grn.vendor_name}</TableCell>
-                        <TableCell>
-                          {grn.invoice_number && (
-                            <div>
-                              <p className="text-sm">{grn.invoice_number}</p>
-                              {grn.invoice_amount && (
-                                <p className="text-xs text-slate-500">
-                                  ₹{grn.invoice_amount.toLocaleString('en-IN')}
-                                </p>
-                              )}
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <Badge variant="secondary">
-                            {grn.quantity} {grn.unit}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => openComplianceDialog(grn)}
-                            className={cn(
-                              'text-xs',
-                              isComplete
-                                ? 'border-green-200 bg-green-50 text-green-700'
-                                : 'border-amber-200 bg-amber-50 text-amber-700'
+                            {grn.invoice_number}
+                            {grn.invoice_amount && (
+                              <span className="text-slate-400"> | ₹{grn.invoice_amount.toLocaleString('en-IN')}</span>
                             )}
-                          >
-                            <FileText className="h-3 w-3 mr-1" />
-                            {compliance.completed}/{compliance.total}
-                            {compliance.na > 0 && ` (${compliance.na} NA)`}
-                          </Button>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => openEditDialog(grn)}
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleDeleteGRN(grn)}
-                              className="text-red-600"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
                           </div>
-                        </TableCell>
-                      </TableRow>
-                    )
-                  })}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => openComplianceDialog(grn)}
+                          className={cn(
+                            'text-xs flex-1',
+                            isComplete
+                              ? 'border-green-200 bg-green-50 text-green-700'
+                              : 'border-amber-200 bg-amber-50 text-amber-700'
+                          )}
+                        >
+                          <FileText className="h-3 w-3 mr-1" />
+                          Docs: {compliance.completed}/{compliance.total}
+                          {compliance.na > 0 && ` (${compliance.na} NA)`}
+                        </Button>
+                        <div className="flex gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openEditDialog(grn)}
+                            className="h-8 w-8 p-0"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDeleteGRN(grn)}
+                            className="text-red-600 h-8 w-8 p-0"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
+              })}
+            </div>
+
+            {/* Desktop Table View */}
+            <Card className="hidden md:block">
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Date</TableHead>
+                      <TableHead>Material</TableHead>
+                      <TableHead>Vendor</TableHead>
+                      <TableHead>Invoice</TableHead>
+                      <TableHead className="text-right">Qty</TableHead>
+                      <TableHead>Compliance</TableHead>
+                      <TableHead className="text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {grnList.map((grn) => {
+                      const compliance = getComplianceStatus(grn)
+                      const isComplete = compliance.completed === compliance.total && compliance.total > 0
+
+                      return (
+                        <TableRow key={grn.id}>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Calendar className="h-4 w-4 text-slate-400" />
+                              {new Date(grn.grn_date).toLocaleDateString('en-IN')}
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">{grn.material_name}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>{grn.vendor_name}</TableCell>
+                          <TableCell>
+                            {grn.invoice_number && (
+                              <div>
+                                <p className="text-sm">{grn.invoice_number}</p>
+                                {grn.invoice_amount && (
+                                  <p className="text-xs text-slate-500">
+                                    ₹{grn.invoice_amount.toLocaleString('en-IN')}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Badge variant="secondary">
+                              {grn.quantity} {grn.unit}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => openComplianceDialog(grn)}
+                              className={cn(
+                                'text-xs',
+                                isComplete
+                                  ? 'border-green-200 bg-green-50 text-green-700'
+                                  : 'border-amber-200 bg-amber-50 text-amber-700'
+                              )}
+                            >
+                              <FileText className="h-3 w-3 mr-1" />
+                              {compliance.completed}/{compliance.total}
+                              {compliance.na > 0 && ` (${compliance.na} NA)`}
+                            </Button>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openEditDialog(grn)}
+                              >
+                                <Pencil className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteGRN(grn)}
+                                className="text-red-600"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </>
         )}
       </div>
 
       {/* GRN Dialog */}
       <Dialog open={grnDialogOpen} onOpenChange={setGrnDialogOpen}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editingGRN ? 'Edit GRN' : 'Add New GRN'}</DialogTitle>
             <DialogDescription>
@@ -810,7 +888,7 @@ export default function MaterialGRNPage() {
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[400px] p-0">
+                <PopoverContent className="w-[calc(100vw-2rem)] sm:w-[400px] p-0">
                   <Command>
                     <CommandInput
                       placeholder="Search materials..."
@@ -895,7 +973,7 @@ export default function MaterialGRNPage() {
 
       {/* Compliance Documents Dialog */}
       <Dialog open={complianceDialogOpen} onOpenChange={setComplianceDialogOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="w-[calc(100vw-2rem)] max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileText className="h-5 w-5" />
@@ -930,11 +1008,11 @@ export default function MaterialGRNPage() {
                     isNA ? 'bg-slate-50' : isUploaded ? 'bg-green-50' : 'bg-white'
                   )}
                 >
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <h4 className="font-medium">{docType.label}</h4>
-                        <span className="text-xs text-slate-500">({docType.fullName})</span>
+                        <h4 className="font-medium text-sm">{docType.label}</h4>
+                        <span className="text-xs text-slate-500 hidden sm:inline">({docType.fullName})</span>
                       </div>
 
                       {isNA && (
@@ -946,10 +1024,10 @@ export default function MaterialGRNPage() {
 
                       {isUploaded && doc?.file_name && (
                         <div className="flex items-center gap-1 text-xs mt-1">
-                          <FileCheck className="h-3 w-3 text-green-600" />
+                          <FileCheck className="h-3 w-3 text-green-600 shrink-0" />
                           <button
                             onClick={() => viewDocument(doc)}
-                            className="text-blue-600 hover:underline truncate max-w-[150px]"
+                            className="text-blue-600 hover:underline truncate max-w-[200px]"
                           >
                             {doc.file_name}
                           </button>
@@ -964,7 +1042,7 @@ export default function MaterialGRNPage() {
                       )}
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 flex-wrap justify-end">
                       {doc && (
                         <Button
                           variant="outline"
