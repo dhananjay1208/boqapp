@@ -78,6 +78,7 @@ import {
   AlertCircle,
   FileCheck,
   Ban,
+  Camera,
 } from 'lucide-react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
@@ -2060,39 +2061,69 @@ export default function BOQDetailPage() {
                         <h4 className="font-medium">{docType.label}</h4>
                         <span className="text-xs text-slate-500">({docType.fullName})</span>
                       </div>
-                      <label>
-                        <input
-                          type="file"
-                          className="hidden"
-                          accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0]
-                            if (file) {
-                              openUploadWithDateDialog(docType.value, file)
-                            }
-                            e.target.value = ''
-                          }}
-                          disabled={uploadingDoc === docType.value}
-                        />
-                        <Button
-                          variant="default"
-                          size="sm"
-                          asChild
-                          disabled={uploadingDoc === docType.value}
-                          className="h-8"
-                        >
-                          <span className="cursor-pointer">
-                            {uploadingDoc === docType.value ? (
-                              <>Uploading...</>
-                            ) : (
-                              <>
-                                <Plus className="h-4 w-4 mr-1" />
-                                Add DC
-                              </>
-                            )}
-                          </span>
-                        </Button>
-                      </label>
+                      <div className="flex gap-1">
+                        <label>
+                          <input
+                            type="file"
+                            className="hidden"
+                            accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0]
+                              if (file) {
+                                openUploadWithDateDialog(docType.value, file)
+                              }
+                              e.target.value = ''
+                            }}
+                            disabled={uploadingDoc === docType.value}
+                          />
+                          <Button
+                            variant="default"
+                            size="sm"
+                            asChild
+                            disabled={uploadingDoc === docType.value}
+                            className="h-8"
+                          >
+                            <span className="cursor-pointer">
+                              {uploadingDoc === docType.value ? (
+                                <>Uploading...</>
+                              ) : (
+                                <>
+                                  <Plus className="h-4 w-4 mr-1" />
+                                  Add DC
+                                </>
+                              )}
+                            </span>
+                          </Button>
+                        </label>
+                        <label>
+                          <input
+                            type="file"
+                            className="hidden"
+                            accept="image/*"
+                            capture="environment"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0]
+                              if (file) {
+                                openUploadWithDateDialog(docType.value, file)
+                              }
+                              e.target.value = ''
+                            }}
+                            disabled={uploadingDoc === docType.value}
+                          />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            asChild
+                            disabled={uploadingDoc === docType.value}
+                            className="h-8"
+                            title="Take photo"
+                          >
+                            <span className="cursor-pointer">
+                              <Camera className="h-4 w-4" />
+                            </span>
+                          </Button>
+                        </label>
+                      </div>
                     </div>
 
                     {uploadedDCs.length === 0 ? (
@@ -2234,9 +2265,30 @@ export default function BOQDetailPage() {
                                   }}
                                   disabled={uploadingDoc === docType.value}
                                 />
-                                <Button variant="outline" size="sm" asChild className="h-8" title="Replace document">
+                                <Button variant="outline" size="sm" asChild className="h-8" title="Upload file">
                                   <span className="cursor-pointer">
                                     <Upload className="h-4 w-4" />
+                                  </span>
+                                </Button>
+                              </label>
+                              <label>
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  accept="image/*"
+                                  capture="environment"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0]
+                                    if (file && selectedMaterialForCompliance) {
+                                      handleFileUpload(selectedMaterialForCompliance.id, docType.value, file)
+                                    }
+                                    e.target.value = ''
+                                  }}
+                                  disabled={uploadingDoc === docType.value}
+                                />
+                                <Button variant="outline" size="sm" asChild className="h-8" title="Take photo">
+                                  <span className="cursor-pointer">
+                                    <Camera className="h-4 w-4" />
                                   </span>
                                 </Button>
                               </label>
@@ -2251,39 +2303,69 @@ export default function BOQDetailPage() {
                               </Button>
                             </>
                           ) : (
-                            <label>
-                              <input
-                                type="file"
-                                className="hidden"
-                                accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0]
-                                  if (file && selectedMaterialForCompliance) {
-                                    handleFileUpload(selectedMaterialForCompliance.id, docType.value, file)
-                                  }
-                                  e.target.value = ''
-                                }}
-                                disabled={uploadingDoc === docType.value}
-                              />
-                              <Button
-                                variant="default"
-                                size="sm"
-                                asChild
-                                disabled={uploadingDoc === docType.value}
-                                className="h-8"
-                              >
-                                <span className="cursor-pointer">
-                                  {uploadingDoc === docType.value ? (
-                                    <>...</>
-                                  ) : (
-                                    <>
-                                      <Upload className="h-4 w-4 mr-1" />
-                                      Upload
-                                    </>
-                                  )}
-                                </span>
-                              </Button>
-                            </label>
+                            <div className="flex gap-1">
+                              <label>
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0]
+                                    if (file && selectedMaterialForCompliance) {
+                                      handleFileUpload(selectedMaterialForCompliance.id, docType.value, file)
+                                    }
+                                    e.target.value = ''
+                                  }}
+                                  disabled={uploadingDoc === docType.value}
+                                />
+                                <Button
+                                  variant="default"
+                                  size="sm"
+                                  asChild
+                                  disabled={uploadingDoc === docType.value}
+                                  className="h-8"
+                                >
+                                  <span className="cursor-pointer">
+                                    {uploadingDoc === docType.value ? (
+                                      <>...</>
+                                    ) : (
+                                      <>
+                                        <Upload className="h-4 w-4 mr-1" />
+                                        Upload
+                                      </>
+                                    )}
+                                  </span>
+                                </Button>
+                              </label>
+                              <label>
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  accept="image/*"
+                                  capture="environment"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0]
+                                    if (file && selectedMaterialForCompliance) {
+                                      handleFileUpload(selectedMaterialForCompliance.id, docType.value, file)
+                                    }
+                                    e.target.value = ''
+                                  }}
+                                  disabled={uploadingDoc === docType.value}
+                                />
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  asChild
+                                  disabled={uploadingDoc === docType.value}
+                                  className="h-8"
+                                  title="Take photo"
+                                >
+                                  <span className="cursor-pointer">
+                                    <Camera className="h-4 w-4" />
+                                  </span>
+                                </Button>
+                              </label>
+                            </div>
                           )}
                         </>
                       )}
@@ -2294,7 +2376,7 @@ export default function BOQDetailPage() {
             })}
 
             <p className="text-xs text-slate-400 mt-2">
-              Formats: PDF, DOC, XLS, PNG, JPG
+              Formats: PDF, DOC, XLS, PNG, JPG | Use <Camera className="inline h-3 w-3" /> to capture with camera
             </p>
           </div>
 

@@ -70,6 +70,7 @@ import {
   AlertCircle,
   Check,
   ChevronsUpDown,
+  Camera,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
@@ -998,9 +999,27 @@ export default function MaterialGRNPage() {
                                     e.target.value = ''
                                   }}
                                 />
-                                <Button variant="outline" size="sm" asChild className="h-8">
+                                <Button variant="outline" size="sm" asChild className="h-8" title="Upload file">
                                   <span className="cursor-pointer">
                                     <Upload className="h-4 w-4" />
+                                  </span>
+                                </Button>
+                              </label>
+                              <label>
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  accept="image/*"
+                                  capture="environment"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0]
+                                    if (file) handleFileUpload(doc, file)
+                                    e.target.value = ''
+                                  }}
+                                />
+                                <Button variant="outline" size="sm" asChild className="h-8" title="Take photo">
+                                  <span className="cursor-pointer">
+                                    <Camera className="h-4 w-4" />
                                   </span>
                                 </Button>
                               </label>
@@ -1014,37 +1033,65 @@ export default function MaterialGRNPage() {
                               </Button>
                             </>
                           ) : (
-                            <label>
-                              <input
-                                type="file"
-                                className="hidden"
-                                accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0]
-                                  if (file) handleFileUpload(doc, file)
-                                  e.target.value = ''
-                                }}
-                                disabled={uploadingDoc === docType.value}
-                              />
-                              <Button
-                                variant="default"
-                                size="sm"
-                                asChild
-                                disabled={uploadingDoc === docType.value}
-                                className="h-8"
-                              >
-                                <span className="cursor-pointer">
-                                  {uploadingDoc === docType.value ? (
-                                    'Uploading...'
-                                  ) : (
-                                    <>
-                                      <Upload className="h-4 w-4 mr-1" />
-                                      Upload
-                                    </>
-                                  )}
-                                </span>
-                              </Button>
-                            </label>
+                            <div className="flex gap-1">
+                              <label>
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0]
+                                    if (file) handleFileUpload(doc, file)
+                                    e.target.value = ''
+                                  }}
+                                  disabled={uploadingDoc === docType.value}
+                                />
+                                <Button
+                                  variant="default"
+                                  size="sm"
+                                  asChild
+                                  disabled={uploadingDoc === docType.value}
+                                  className="h-8"
+                                >
+                                  <span className="cursor-pointer">
+                                    {uploadingDoc === docType.value ? (
+                                      'Uploading...'
+                                    ) : (
+                                      <>
+                                        <Upload className="h-4 w-4 mr-1" />
+                                        Upload
+                                      </>
+                                    )}
+                                  </span>
+                                </Button>
+                              </label>
+                              <label>
+                                <input
+                                  type="file"
+                                  className="hidden"
+                                  accept="image/*"
+                                  capture="environment"
+                                  onChange={(e) => {
+                                    const file = e.target.files?.[0]
+                                    if (file) handleFileUpload(doc, file)
+                                    e.target.value = ''
+                                  }}
+                                  disabled={uploadingDoc === docType.value}
+                                />
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  asChild
+                                  disabled={uploadingDoc === docType.value}
+                                  className="h-8"
+                                  title="Take photo"
+                                >
+                                  <span className="cursor-pointer">
+                                    <Camera className="h-4 w-4" />
+                                  </span>
+                                </Button>
+                              </label>
+                            </div>
                           )}
                         </>
                       )}
@@ -1055,7 +1102,7 @@ export default function MaterialGRNPage() {
             })}
 
             <p className="text-xs text-slate-400 mt-2">
-              Formats: PDF, DOC, XLS, PNG, JPG
+              Formats: PDF, DOC, XLS, PNG, JPG | Use <Camera className="inline h-3 w-3" /> to capture with camera
             </p>
           </div>
 
