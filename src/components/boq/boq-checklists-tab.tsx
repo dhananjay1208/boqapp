@@ -114,7 +114,7 @@ interface Props {
   lineItems: BOQLineItem[]
 }
 
-const CLEARANCE_TYPES = [
+const DEFAULT_CLEARANCE_TYPES = [
   { value: 'cw', label: 'C&W Representative' },
   { value: 'electrical', label: 'Electrical Representative' },
   { value: 'hvac', label: 'HVAC Representative' },
@@ -144,7 +144,9 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
     notes: '',
   })
   const [formItems, setFormItems] = useState<{ item_no: number; description: string; status: string; remarks: string }[]>([])
-  const [formClearances, setFormClearances] = useState<{ clearance_type: string; representative_name: string; clearance_date: string }[]>([])
+  const [formClearances, setFormClearances] = useState<{ clearance_type: string; label: string; representative_name: string; clearance_date: string }[]>([])
+  const [editingClearanceIndex, setEditingClearanceIndex] = useState<number | null>(null)
+  const [newClearanceLabel, setNewClearanceLabel] = useState('')
 
   const printRef = useRef<HTMLDivElement>(null)
   const signedCopyInputRef = useRef<HTMLInputElement>(null)
@@ -226,12 +228,15 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
     })
     setFormItems([])
     setFormClearances(
-      CLEARANCE_TYPES.map(ct => ({
+      DEFAULT_CLEARANCE_TYPES.map(ct => ({
         clearance_type: ct.value,
+        label: ct.label,
         representative_name: '',
         clearance_date: '',
       }))
     )
+    setEditingClearanceIndex(null)
+    setNewClearanceLabel('')
     setShowCreateDialog(true)
   }
 
@@ -271,6 +276,45 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
     const newClearances = [...formClearances]
     newClearances[index] = { ...newClearances[index], [field]: value }
     setFormClearances(newClearances)
+  }
+
+  function addClearanceRole() {
+    const newClearances = [...formClearances]
+    const newId = `custom_${Date.now()}`
+    newClearances.push({
+      clearance_type: newId,
+      label: 'New Role',
+      representative_name: '',
+      clearance_date: '',
+    })
+    setFormClearances(newClearances)
+    setEditingClearanceIndex(newClearances.length - 1)
+    setNewClearanceLabel('New Role')
+  }
+
+  function startEditingClearanceLabel(index: number) {
+    setEditingClearanceIndex(index)
+    setNewClearanceLabel(formClearances[index].label)
+  }
+
+  function saveClearanceLabel(index: number) {
+    if (newClearanceLabel.trim()) {
+      const newClearances = [...formClearances]
+      newClearances[index] = {
+        ...newClearances[index],
+        label: newClearanceLabel.trim(),
+        clearance_type: newClearanceLabel.trim().toLowerCase().replace(/\s+/g, '_'),
+      }
+      setFormClearances(newClearances)
+    }
+    setEditingClearanceIndex(null)
+    setNewClearanceLabel('')
+  }
+
+  function deleteClearanceRole(index: number) {
+    const newClearances = formClearances.filter((_, i) => i !== index)
+    setFormClearances(newClearances)
+    setEditingClearanceIndex(null)
   }
 
   async function handleSaveChecklist() {
@@ -361,16 +405,38 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
         remarks: item.remarks || '',
       })) || []
     )
-    setFormClearances(
-      CLEARANCE_TYPES.map(ct => {
-        const existing = checklist.clearances?.find(c => c.clearance_type === ct.value)
-        return {
-          clearance_type: ct.value,
-          representative_name: existing?.representative_name || '',
-          clearance_date: existing?.clearance_date || '',
-        }
+
+    // Build clearances list - include existing clearances and default types
+    const existingClearances = checklist.clearances || []
+    const clearancesList: { clearance_type: string; label: string; representative_name: string; clearance_date: string }[] = []
+
+    // Add default types first
+    DEFAULT_CLEARANCE_TYPES.forEach(ct => {
+      const existing = existingClearances.find(c => c.clearance_type === ct.value)
+      clearancesList.push({
+        clearance_type: ct.value,
+        label: ct.label,
+        representative_name: existing?.representative_name || '',
+        clearance_date: existing?.clearance_date || '',
       })
-    )
+    })
+
+    // Add any custom clearances that aren't in default types
+    existingClearances.forEach(c => {
+      const isDefault = DEFAULT_CLEARANCE_TYPES.some(dt => dt.value === c.clearance_type)
+      if (!isDefault) {
+        clearancesList.push({
+          clearance_type: c.clearance_type,
+          label: c.clearance_type, // Use the clearance_type as label for custom types
+          representative_name: c.representative_name || '',
+          clearance_date: c.clearance_date || '',
+        })
+      }
+    })
+
+    setFormClearances(clearancesList)
+    setEditingClearanceIndex(null)
+    setNewClearanceLabel('')
     setShowViewDialog(true)
   }
 
@@ -639,10 +705,9 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
             <span>Signature</span>
           </div>
           ${formClearances.map(c => {
-            const label = CLEARANCE_TYPES.find(ct => ct.value === c.clearance_type)?.label || c.clearance_type
             return `
               <div class="clearance-row">
-                <span>${label}</span>
+                <span>${c.label || c.clearance_type}</span>
                 <span>${c.representative_name || '-'}</span>
                 <span>${c.clearance_date ? new Date(c.clearance_date).toLocaleDateString('en-IN') : '-'}</span>
                 <span class="signature-line">&nbsp;</span>
@@ -957,28 +1022,89 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
 
                 {/* Clearances */}
                 <div>
-                  <Label className="mb-2 block">Clearances</Label>
+                  <div className="flex items-center justify-between mb-2">
+                    <Label>Clearances</Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={addClearanceRole}
+                    >
+                      <Plus className="h-4 w-4 mr-1" />
+                      Add Role
+                    </Button>
+                  </div>
                   <div className="space-y-2">
-                    {formClearances.map((clearance, index) => {
-                      const label = CLEARANCE_TYPES.find(ct => ct.value === clearance.clearance_type)?.label
-                      return (
-                        <div key={clearance.clearance_type} className="grid grid-cols-3 gap-2 items-center">
-                          <span className="text-sm font-medium">{label}</span>
-                          <Input
-                            value={clearance.representative_name}
-                            onChange={(e) => updateClearance(index, 'representative_name', e.target.value)}
-                            placeholder="Name"
-                            className="h-8"
-                          />
-                          <Input
-                            type="date"
-                            value={clearance.clearance_date}
-                            onChange={(e) => updateClearance(index, 'clearance_date', e.target.value)}
-                            className="h-8"
-                          />
-                        </div>
-                      )
-                    })}
+                    {formClearances.map((clearance, index) => (
+                      <div key={clearance.clearance_type} className="grid grid-cols-[1fr_1fr_120px_auto] gap-2 items-center">
+                        {editingClearanceIndex === index ? (
+                          <div className="flex items-center gap-1">
+                            <Input
+                              value={newClearanceLabel}
+                              onChange={(e) => setNewClearanceLabel(e.target.value)}
+                              placeholder="Role name"
+                              className="h-8"
+                              autoFocus
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault()
+                                  saveClearanceLabel(index)
+                                }
+                                if (e.key === 'Escape') {
+                                  setEditingClearanceIndex(null)
+                                }
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => saveClearanceLabel(index)}
+                            >
+                              <CheckCircle2 className="h-4 w-4 text-green-600" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <span className="text-sm font-medium">{clearance.label}</span>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6"
+                              onClick={() => startEditingClearanceLabel(index)}
+                            >
+                              <Pencil className="h-3 w-3 text-slate-400" />
+                            </Button>
+                          </div>
+                        )}
+                        <Input
+                          value={clearance.representative_name}
+                          onChange={(e) => updateClearance(index, 'representative_name', e.target.value)}
+                          placeholder="Name"
+                          className="h-8"
+                        />
+                        <Input
+                          type="date"
+                          value={clearance.clearance_date}
+                          onChange={(e) => updateClearance(index, 'clearance_date', e.target.value)}
+                          className="h-8"
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => deleteClearanceRole(index)}
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
+                      </div>
+                    ))}
+                    {formClearances.length === 0 && (
+                      <p className="text-sm text-slate-500 text-center py-2">No clearance roles. Click "Add Role" to add one.</p>
+                    )}
                   </div>
                 </div>
               </>
@@ -1115,28 +1241,89 @@ export default function BOQChecklistsTab({ headlineId, lineItems }: Props) {
 
             {/* Clearances */}
             <div>
-              <Label className="mb-2 block">Clearances</Label>
+              <div className="flex items-center justify-between mb-2">
+                <Label>Clearances</Label>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={addClearanceRole}
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  Add Role
+                </Button>
+              </div>
               <div className="space-y-2">
-                {formClearances.map((clearance, index) => {
-                  const label = CLEARANCE_TYPES.find(ct => ct.value === clearance.clearance_type)?.label
-                  return (
-                    <div key={clearance.clearance_type} className="grid grid-cols-3 gap-2 items-center">
-                      <span className="text-sm font-medium">{label}</span>
-                      <Input
-                        value={clearance.representative_name}
-                        onChange={(e) => updateClearance(index, 'representative_name', e.target.value)}
-                        placeholder="Name"
-                        className="h-8"
-                      />
-                      <Input
-                        type="date"
-                        value={clearance.clearance_date}
-                        onChange={(e) => updateClearance(index, 'clearance_date', e.target.value)}
-                        className="h-8"
-                      />
-                    </div>
-                  )
-                })}
+                {formClearances.map((clearance, index) => (
+                  <div key={clearance.clearance_type} className="grid grid-cols-[1fr_1fr_120px_auto] gap-2 items-center">
+                    {editingClearanceIndex === index ? (
+                      <div className="flex items-center gap-1">
+                        <Input
+                          value={newClearanceLabel}
+                          onChange={(e) => setNewClearanceLabel(e.target.value)}
+                          placeholder="Role name"
+                          className="h-8"
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              saveClearanceLabel(index)
+                            }
+                            if (e.key === 'Escape') {
+                              setEditingClearanceIndex(null)
+                            }
+                          }}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8"
+                          onClick={() => saveClearanceLabel(index)}
+                        >
+                          <CheckCircle2 className="h-4 w-4 text-green-600" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        <span className="text-sm font-medium">{clearance.label}</span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6"
+                          onClick={() => startEditingClearanceLabel(index)}
+                        >
+                          <Pencil className="h-3 w-3 text-slate-400" />
+                        </Button>
+                      </div>
+                    )}
+                    <Input
+                      value={clearance.representative_name}
+                      onChange={(e) => updateClearance(index, 'representative_name', e.target.value)}
+                      placeholder="Name"
+                      className="h-8"
+                    />
+                    <Input
+                      type="date"
+                      value={clearance.clearance_date}
+                      onChange={(e) => updateClearance(index, 'clearance_date', e.target.value)}
+                      className="h-8"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => deleteClearanceRole(index)}
+                    >
+                      <Trash2 className="h-4 w-4 text-red-500" />
+                    </Button>
+                  </div>
+                ))}
+                {formClearances.length === 0 && (
+                  <p className="text-sm text-slate-500 text-center py-2">No clearance roles. Click "Add Role" to add one.</p>
+                )}
               </div>
             </div>
 
