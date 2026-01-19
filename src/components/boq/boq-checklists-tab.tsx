@@ -96,14 +96,14 @@ interface BOQChecklistItem {
   checklist_id: string
   item_no: number
   description: string
-  status: 'Y' | 'N' | 'NA' | null
+  status: 'Y' | 'N' | 'NA' | 'Done' | 'In Progress' | 'Pending' | null
   remarks: string | null
 }
 
 interface BOQChecklistClearance {
   id: string
   checklist_id: string
-  clearance_type: 'cw' | 'electrical' | 'hvac'
+  clearance_type: string
   representative_name: string | null
   clearance_date: string | null
   signature: string | null
