@@ -43,10 +43,12 @@ import {
   Clock,
   CheckCircle2,
   ExternalLink,
+  Download,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import * as XLSX from 'xlsx'
 
 interface Site {
   id: string
@@ -475,6 +477,75 @@ export default function SupplierInvoicesPage() {
     }
   }
 
+  // Export to Excel
+  function exportToExcel() {
+    const allInvoices = Object.values(invoiceAggregates)
+
+    if (allInvoices.length === 0) {
+      toast.error('No data to export')
+      return
+    }
+
+    // Get the site name
+    const siteName = sites.find(s => s.id === selectedSiteId)?.name || 'Unknown Site'
+
+    // Prepare data for export
+    const exportData = allInvoices.map(invoice => ({
+      'Supplier Name': invoice.supplier_name,
+      'Invoice Number': invoice.invoice_number,
+      'Amount (Excl. GST)': invoice.amount_without_gst,
+      'GST Amount': invoice.gst_amount,
+      'Total Amount': invoice.total_amount,
+      'Payment Status': invoice.payment_status === 'paid' ? 'Fully Paid' :
+                        invoice.payment_status === 'partial' ? 'Partially Paid' : 'Pending',
+      'Amount Paid': invoice.payment_amount || 0,
+      'Balance Due': invoice.payment_status === 'paid' ? 0 :
+                     invoice.total_amount - (invoice.payment_amount || 0),
+      'Payment Date': invoice.paid_at
+        ? new Date(invoice.paid_at).toLocaleDateString('en-IN', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric'
+          })
+        : '',
+      'Payment Reference': invoice.payment_reference || '',
+      'Notes': invoice.payment_notes || '',
+      'DC Uploaded': invoice.dc_uploaded ? 'Yes' : 'No',
+      'GRN Count': invoice.grn_count,
+    }))
+
+    // Create workbook and worksheet
+    const wb = XLSX.utils.book_new()
+    const ws = XLSX.utils.json_to_sheet(exportData)
+
+    // Set column widths
+    ws['!cols'] = [
+      { wch: 25 }, // Supplier Name
+      { wch: 15 }, // Invoice Number
+      { wch: 18 }, // Amount (Excl. GST)
+      { wch: 15 }, // GST Amount
+      { wch: 15 }, // Total Amount
+      { wch: 15 }, // Payment Status
+      { wch: 15 }, // Amount Paid
+      { wch: 15 }, // Balance Due
+      { wch: 15 }, // Payment Date
+      { wch: 20 }, // Payment Reference
+      { wch: 25 }, // Notes
+      { wch: 12 }, // DC Uploaded
+      { wch: 10 }, // GRN Count
+    ]
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Supplier Invoices')
+
+    // Generate filename with site name and date
+    const date = new Date().toISOString().split('T')[0]
+    const filename = `Supplier_Invoices_${siteName.replace(/[^a-zA-Z0-9]/g, '_')}_${date}.xlsx`
+
+    // Download file
+    XLSX.writeFile(wb, filename)
+    toast.success('Exported to Excel successfully')
+  }
+
   if (loading) {
     return (
       <div className="flex flex-col min-h-screen">
@@ -508,7 +579,7 @@ export default function SupplierInvoicesPage() {
                 </CardDescription>
               </div>
 
-              <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
                 <Select value={selectedSiteId} onValueChange={setSelectedSiteId}>
                   <SelectTrigger className="w-full sm:w-[250px]">
                     <Building2 className="h-4 w-4 mr-2" />
@@ -522,6 +593,18 @@ export default function SupplierInvoicesPage() {
                     ))}
                   </SelectContent>
                 </Select>
+
+                {selectedSiteId && Object.keys(invoiceAggregates).length > 0 && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={exportToExcel}
+                    className="w-full sm:w-auto"
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Export to Excel
+                  </Button>
+                )}
               </div>
             </div>
           </CardHeader>
