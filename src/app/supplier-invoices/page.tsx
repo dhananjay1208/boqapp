@@ -146,6 +146,7 @@ export default function SupplierInvoicesPage() {
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false)
   const [selectedInvoice, setSelectedInvoice] = useState<InvoiceDetail | null>(null)
   const [paymentReference, setPaymentReference] = useState('')
+  const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().split('T')[0])
   const [paymentNotes, setPaymentNotes] = useState('')
   const [savingPayment, setSavingPayment] = useState(false)
 
@@ -383,6 +384,11 @@ export default function SupplierInvoicesPage() {
       return
     }
 
+    if (!paymentDate) {
+      toast.error('Payment date is required')
+      return
+    }
+
     setSavingPayment(true)
     try {
       const paymentData = {
@@ -391,7 +397,7 @@ export default function SupplierInvoicesPage() {
         invoice_number: selectedInvoice.invoice_number,
         payment_status: 'paid' as const,
         payment_reference: paymentReference.trim(),
-        paid_at: new Date().toISOString(),
+        paid_at: new Date(paymentDate).toISOString(),
         notes: paymentNotes.trim() || null,
       }
 
@@ -408,6 +414,7 @@ export default function SupplierInvoicesPage() {
       setPaymentDialogOpen(false)
       setSelectedInvoice(null)
       setPaymentReference('')
+      setPaymentDate(new Date().toISOString().split('T')[0])
       setPaymentNotes('')
 
       // Refresh data
@@ -737,6 +744,18 @@ export default function SupplierInvoicesPage() {
               </div>
 
               <div className="space-y-2">
+                <Label htmlFor="payment-date">
+                  Payment Date <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="payment-date"
+                  type="date"
+                  value={paymentDate}
+                  onChange={(e) => setPaymentDate(e.target.value)}
+                />
+              </div>
+
+              <div className="space-y-2">
                 <Label htmlFor="payment-reference">
                   Payment Reference <span className="text-red-500">*</span>
                 </Label>
@@ -768,6 +787,7 @@ export default function SupplierInvoicesPage() {
                 setPaymentDialogOpen(false)
                 setSelectedInvoice(null)
                 setPaymentReference('')
+                setPaymentDate(new Date().toISOString().split('T')[0])
                 setPaymentNotes('')
               }}
             >
@@ -775,7 +795,7 @@ export default function SupplierInvoicesPage() {
             </Button>
             <Button
               onClick={handleMarkAsPaid}
-              disabled={savingPayment || !paymentReference.trim()}
+              disabled={savingPayment || !paymentReference.trim() || !paymentDate}
             >
               {savingPayment && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Confirm Payment
