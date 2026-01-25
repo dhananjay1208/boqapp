@@ -421,11 +421,20 @@ export default function SupplierInvoicesPage() {
   }
 
   // Open DC file
-  function openDcFile(filePath: string) {
-    const { data } = supabase.storage
-      .from('compliance-docs')
-      .getPublicUrl(filePath)
-    window.open(data.publicUrl, '_blank')
+  async function openDcFile(filePath: string) {
+    try {
+      const { data, error } = await supabase.storage
+        .from('compliance-docs')
+        .createSignedUrl(filePath, 3600) // 1 hour expiry
+
+      if (error) throw error
+      if (data?.signedUrl) {
+        window.open(data.signedUrl, '_blank')
+      }
+    } catch (error) {
+      console.error('Error opening document:', error)
+      toast.error('Failed to open document')
+    }
   }
 
   if (loading) {
