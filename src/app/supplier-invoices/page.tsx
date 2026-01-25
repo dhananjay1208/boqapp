@@ -412,16 +412,20 @@ export default function SupplierInvoicesPage() {
 
     setSavingPayment(true)
     try {
-      // Determine payment status based on amount vs invoice total
+      // Calculate total paid including previous payments
+      const previouslyPaid = selectedInvoice.payment_amount || 0
+      const totalPaid = previouslyPaid + amount
       const invoiceTotal = selectedInvoice.total_amount
-      const status: 'partial' | 'paid' = amount >= invoiceTotal ? 'paid' : 'partial'
+
+      // Determine payment status based on total paid vs invoice total
+      const status: 'partial' | 'paid' = totalPaid >= invoiceTotal ? 'paid' : 'partial'
 
       const paymentData = {
         site_id: selectedSiteId,
         supplier_id: selectedInvoice.supplier_id,
         invoice_number: selectedInvoice.invoice_number,
         payment_status: status,
-        payment_amount: amount,
+        payment_amount: totalPaid,
         payment_reference: paymentReference.trim(),
         paid_at: new Date(paymentDate).toISOString(),
         notes: paymentNotes.trim() || null,
@@ -657,11 +661,13 @@ export default function SupplierInvoicesPage() {
                                   className="h-6 text-xs"
                                   onClick={() => {
                                     setSelectedInvoice(invoice)
-                                    setPaymentAmount('')
+                                    // Pre-fill with balance amount
+                                    const balance = invoice.total_amount - (invoice.payment_amount || 0)
+                                    setPaymentAmount(balance.toFixed(2))
                                     setPaymentDialogOpen(true)
                                   }}
                                 >
-                                  Add Payment
+                                  Pay Balance
                                 </Button>
                               </div>
                             ) : (
@@ -798,11 +804,27 @@ export default function SupplierInvoicesPage() {
                   <span className="font-medium">{selectedInvoice.supplier_name}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-slate-500">Amount</span>
+                  <span className="text-slate-500">Invoice Total</span>
                   <span className="font-semibold text-blue-600">
                     {formatCurrency(selectedInvoice.total_amount)}
                   </span>
                 </div>
+                {selectedInvoice.payment_amount && selectedInvoice.payment_amount > 0 && (
+                  <>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-500">Already Paid</span>
+                      <span className="font-medium text-green-600">
+                        {formatCurrency(selectedInvoice.payment_amount)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-sm border-t pt-2">
+                      <span className="text-slate-500 font-medium">Balance Due</span>
+                      <span className="font-semibold text-orange-600">
+                        {formatCurrency(selectedInvoice.total_amount - selectedInvoice.payment_amount)}
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-3">
@@ -820,7 +842,7 @@ export default function SupplierInvoicesPage() {
 
                 <div className="space-y-2">
                   <Label htmlFor="payment-amount">
-                    Amount <span className="text-red-500">*</span>
+                    {selectedInvoice.payment_amount ? 'Pay Amount' : 'Amount'} <span className="text-red-500">*</span>
                   </Label>
                   <Input
                     id="payment-amount"
@@ -833,11 +855,29 @@ export default function SupplierInvoicesPage() {
                 </div>
               </div>
 
-              {paymentAmount && parseFloat(paymentAmount) < selectedInvoice.total_amount && (
-                <div className="p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
-                  Amount is less than invoice total. This will be recorded as a partial payment.
-                </div>
-              )}
+              {(() => {
+                const previouslyPaid = selectedInvoice.payment_amount || 0
+                const currentPayment = parseFloat(paymentAmount) || 0
+                const totalAfterPayment = previouslyPaid + currentPayment
+                const invoiceTotal = selectedInvoice.total_amount
+
+                if (currentPayment > 0 && totalAfterPayment < invoiceTotal) {
+                  return (
+                    <div className="p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+                      Total paid will be {formatCurrency(totalAfterPayment)}.
+                      Balance of {formatCurrency(invoiceTotal - totalAfterPayment)} will remain.
+                      This will be recorded as a partial payment.
+                    </div>
+                  )
+                } else if (currentPayment > 0 && totalAfterPayment >= invoiceTotal) {
+                  return (
+                    <div className="p-2 bg-green-50 border border-green-200 rounded text-xs text-green-700">
+                      This payment will mark the invoice as fully paid.
+                    </div>
+                  )
+                }
+                return null
+              })()}
 
               <div className="space-y-2">
                 <Label htmlFor="payment-reference">
