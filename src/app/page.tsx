@@ -182,36 +182,109 @@ export default function DashboardPage() {
 
   async function fetchComplianceSummary() {
     try {
-      // Get GRN IDs for this site
-      const { data: grnData, error: grnError } = await supabase
+      let totalDocs = 0
+      let uploadedDocs = 0
+      let pendingDocs = 0
+      let notApplicableDocs = 0
+
+      // ============================================
+      // 1. Get compliance from OLD tables (material_grn + grn_compliance_documents)
+      // ============================================
+      const { data: oldGrnData, error: oldGrnError } = await supabase
         .from('material_grn')
         .select('id')
         .eq('site_id', selectedSiteId)
 
-      if (grnError) throw grnError
-
-      if (!grnData || grnData.length === 0) {
-        setComplianceSummary({ total: 0, uploaded: 0, pending: 0, notApplicable: 0 })
-        return
+      if (oldGrnError) {
+        console.error('Error fetching old GRN data:', oldGrnError)
       }
 
-      const grnIds = grnData.map(g => g.id)
+      if (oldGrnData && oldGrnData.length > 0) {
+        const oldGrnIds = oldGrnData.map(g => g.id)
 
-      // Get compliance documents
-      const { data: docsData, error: docsError } = await supabase
-        .from('grn_compliance_documents')
-        .select('is_applicable, is_uploaded')
-        .in('grn_id', grnIds)
+        const { data: oldDocsData, error: oldDocsError } = await supabase
+          .from('grn_compliance_documents')
+          .select('is_applicable, is_uploaded')
+          .in('grn_id', oldGrnIds)
 
-      if (docsError) throw docsError
+        if (oldDocsError) {
+          console.error('Error fetching old compliance docs:', oldDocsError)
+        } else {
+          const oldDocs = oldDocsData || []
+          totalDocs += oldDocs.filter(d => d.is_applicable).length
+          notApplicableDocs += oldDocs.filter(d => !d.is_applicable).length
+          uploadedDocs += oldDocs.filter(d => d.is_applicable && d.is_uploaded).length
+          pendingDocs += oldDocs.filter(d => d.is_applicable && !d.is_uploaded).length
+        }
+      }
 
-      const docs = docsData || []
-      const total = docs.length
-      const notApplicable = docs.filter(d => !d.is_applicable).length
-      const uploaded = docs.filter(d => d.is_applicable && d.is_uploaded).length
-      const pending = docs.filter(d => d.is_applicable && !d.is_uploaded).length
+      // ============================================
+      // 2. Get compliance from NEW tables (grn_invoices, grn_invoice_dc, grn_line_items, grn_line_item_documents)
+      // ============================================
+      const { data: newInvoicesData, error: newInvoicesError } = await supabase
+        .from('grn_invoices')
+        .select('id')
+        .eq('site_id', selectedSiteId)
 
-      setComplianceSummary({ total, uploaded, pending, notApplicable })
+      if (newInvoicesError) {
+        console.error('Error fetching new invoices:', newInvoicesError)
+      }
+
+      if (newInvoicesData && newInvoicesData.length > 0) {
+        const invoiceIds = newInvoicesData.map(inv => inv.id)
+
+        // Get DC documents
+        const { data: dcDocsData, error: dcDocsError } = await supabase
+          .from('grn_invoice_dc')
+          .select('is_applicable, is_uploaded')
+          .in('grn_invoice_id', invoiceIds)
+
+        if (dcDocsError) {
+          console.error('Error fetching DC docs:', dcDocsError)
+        } else {
+          const dcDocs = dcDocsData || []
+          totalDocs += dcDocs.filter(d => d.is_applicable).length
+          notApplicableDocs += dcDocs.filter(d => !d.is_applicable).length
+          uploadedDocs += dcDocs.filter(d => d.is_applicable && d.is_uploaded).length
+          pendingDocs += dcDocs.filter(d => d.is_applicable && !d.is_uploaded).length
+        }
+
+        // Get line item documents
+        const { data: lineItemsData, error: lineItemsError } = await supabase
+          .from('grn_line_items')
+          .select('id')
+          .in('grn_invoice_id', invoiceIds)
+
+        if (lineItemsError) {
+          console.error('Error fetching line items:', lineItemsError)
+        }
+
+        if (lineItemsData && lineItemsData.length > 0) {
+          const lineItemIds = lineItemsData.map(li => li.id)
+
+          const { data: lineItemDocsData, error: lineItemDocsError } = await supabase
+            .from('grn_line_item_documents')
+            .select('is_applicable, is_uploaded')
+            .in('grn_line_item_id', lineItemIds)
+
+          if (lineItemDocsError) {
+            console.error('Error fetching line item docs:', lineItemDocsError)
+          } else {
+            const lineItemDocs = lineItemDocsData || []
+            totalDocs += lineItemDocs.filter(d => d.is_applicable).length
+            notApplicableDocs += lineItemDocs.filter(d => !d.is_applicable).length
+            uploadedDocs += lineItemDocs.filter(d => d.is_applicable && d.is_uploaded).length
+            pendingDocs += lineItemDocs.filter(d => d.is_applicable && !d.is_uploaded).length
+          }
+        }
+      }
+
+      setComplianceSummary({
+        total: totalDocs,
+        uploaded: uploadedDocs,
+        pending: pendingDocs,
+        notApplicable: notApplicableDocs
+      })
     } catch (error) {
       console.error('Error fetching compliance summary:', error)
     }

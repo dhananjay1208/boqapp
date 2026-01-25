@@ -102,8 +102,10 @@ export default function InventoryPage() {
   async function fetchInventory() {
     setLoadingInventory(true)
     try {
-      // Fetch all GRN entries for the selected site
-      const { data: grnData, error: grnError } = await supabase
+      // Fetch from BOTH old and new GRN tables for backward compatibility
+
+      // 1. Fetch from OLD table (material_grn)
+      const { data: oldGrnData, error: oldGrnError } = await supabase
         .from('material_grn')
         .select(`
           material_id,
@@ -113,9 +115,51 @@ export default function InventoryPage() {
           grn_date
         `)
         .eq('site_id', selectedSiteId)
-        .order('grn_date', { ascending: false })
 
-      if (grnError) throw grnError
+      if (oldGrnError) {
+        console.error('Error fetching old GRN data:', oldGrnError)
+      }
+
+      // 2. Fetch from NEW tables (grn_line_items via grn_invoices)
+      const { data: newInvoicesData, error: newInvoicesError } = await supabase
+        .from('grn_invoices')
+        .select('id, grn_date')
+        .eq('site_id', selectedSiteId)
+
+      if (newInvoicesError) {
+        console.error('Error fetching new invoices:', newInvoicesError)
+      }
+
+      let newGrnData: { material_id: string; material_name: string; quantity: number; unit: string; grn_date: string }[] = []
+
+      if (newInvoicesData && newInvoicesData.length > 0) {
+        const invoiceIds = newInvoicesData.map(inv => inv.id)
+        const { data: lineItemsData, error: lineItemsError } = await supabase
+          .from('grn_line_items')
+          .select('material_id, material_name, quantity, unit, grn_invoice_id')
+          .in('grn_invoice_id', invoiceIds)
+
+        if (lineItemsError) {
+          console.error('Error fetching line items:', lineItemsError)
+        } else if (lineItemsData) {
+          // Map line items to include grn_date from their invoice
+          const invoiceDateMap: { [key: string]: string } = {}
+          newInvoicesData.forEach(inv => {
+            invoiceDateMap[inv.id] = inv.grn_date
+          })
+
+          newGrnData = lineItemsData.map(li => ({
+            material_id: li.material_id,
+            material_name: li.material_name,
+            quantity: li.quantity,
+            unit: li.unit,
+            grn_date: invoiceDateMap[li.grn_invoice_id]
+          }))
+        }
+      }
+
+      // Combine old and new GRN data
+      const allGrnData = [...(oldGrnData || []), ...newGrnData]
 
       // Fetch all consumption entries for the selected site
       const { data: consumptionData, error: consumptionError } = await supabase
@@ -128,7 +172,7 @@ export default function InventoryPage() {
       }
 
       // Fetch material categories from master_materials
-      const materialIds = [...new Set((grnData || []).map(g => g.material_id))]
+      const materialIds = [...new Set(allGrnData.map(g => g.material_id))]
 
       let materialCategories: { [key: string]: string } = {}
 
@@ -153,10 +197,10 @@ export default function InventoryPage() {
         consumptionTotals[c.material_id] = (consumptionTotals[c.material_id] || 0) + (parseFloat(c.quantity) || 0)
       })
 
-      // Aggregate GRN quantities by material
+      // Aggregate GRN quantities by material (combining old and new)
       const aggregated: { [key: string]: InventoryItem } = {}
 
-      ;(grnData || []).forEach(grn => {
+      allGrnData.forEach(grn => {
         if (!aggregated[grn.material_id]) {
           aggregated[grn.material_id] = {
             material_id: grn.material_id,
@@ -170,7 +214,7 @@ export default function InventoryPage() {
             receipt_count: 0,
           }
         }
-        aggregated[grn.material_id].received_quantity += parseFloat(grn.quantity) || 0
+        aggregated[grn.material_id].received_quantity += parseFloat(String(grn.quantity)) || 0
         aggregated[grn.material_id].receipt_count += 1
 
         // Keep track of most recent receipt date

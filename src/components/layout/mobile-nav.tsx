@@ -28,6 +28,7 @@ import {
   Wallet,
   PieChart,
   TrendingUp,
+  CreditCard,
 } from 'lucide-react'
 
 const navigation = [
@@ -39,6 +40,7 @@ const navigation = [
   { name: 'Inventory', href: '/inventory', icon: Warehouse },
   { name: 'Expenses Recording', href: '/expenses', icon: Wallet },
   { name: 'Expense Dashboard', href: '/expense-dashboard', icon: PieChart },
+  { name: 'Supplier Invoices', href: '/supplier-invoices', icon: CreditCard },
   { name: 'Checklists', href: '/checklists', icon: ClipboardCheck },
   { name: 'Reports', href: '/reports', icon: BarChart3 },
 ]
