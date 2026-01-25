@@ -95,7 +95,8 @@ interface SupplierInvoicePayment {
   site_id: string
   supplier_id: string
   invoice_number: string
-  payment_status: 'pending' | 'paid'
+  payment_status: 'pending' | 'partial' | 'paid'
+  payment_amount: number | null
   payment_reference: string | null
   paid_at: string | null
   paid_by: string | null
@@ -108,6 +109,7 @@ interface SupplierSummary {
   gstin: string | null
   total_invoices: number
   pending_count: number
+  partial_count: number
   paid_count: number
   pending_amount: number
   paid_amount: number
@@ -123,9 +125,11 @@ interface InvoiceDetail {
   dc_uploaded: boolean
   dc_file_path: string | null
   dc_file_name: string | null
-  payment_status: 'pending' | 'paid'
+  payment_status: 'pending' | 'partial' | 'paid'
+  payment_amount: number | null
   payment_reference: string | null
   paid_at: string | null
+  payment_notes: string | null
   grn_count: number
 }
 
@@ -147,8 +151,10 @@ export default function SupplierInvoicesPage() {
   const [selectedInvoice, setSelectedInvoice] = useState<InvoiceDetail | null>(null)
   const [paymentReference, setPaymentReference] = useState('')
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().split('T')[0])
+  const [paymentAmount, setPaymentAmount] = useState('')
   const [paymentNotes, setPaymentNotes] = useState('')
   const [savingPayment, setSavingPayment] = useState(false)
+  const [viewingInvoice, setViewingInvoice] = useState<InvoiceDetail | null>(null)
 
   useEffect(() => {
     fetchSites()
@@ -293,8 +299,10 @@ export default function SupplierInvoicesPage() {
           dc_file_path: dc?.file_path || null,
           dc_file_name: dc?.file_name || null,
           payment_status: payment?.payment_status || 'pending',
+          payment_amount: payment?.payment_amount || null,
           payment_reference: payment?.payment_reference || null,
           paid_at: payment?.paid_at || null,
+          payment_notes: payment?.notes || null,
           grn_count: 0,
         }
       }
@@ -345,6 +353,7 @@ export default function SupplierInvoicesPage() {
           gstin: supplier?.gstin || null,
           total_invoices: 0,
           pending_count: 0,
+          partial_count: 0,
           paid_count: 0,
           pending_amount: 0,
           paid_amount: 0,
@@ -355,6 +364,12 @@ export default function SupplierInvoicesPage() {
       if (inv.payment_status === 'paid') {
         summaries[inv.supplier_id].paid_count += 1
         summaries[inv.supplier_id].paid_amount += inv.total_amount
+      } else if (inv.payment_status === 'partial') {
+        summaries[inv.supplier_id].partial_count += 1
+        // For partial payments, pending amount is invoice total minus amount paid
+        const balance = inv.total_amount - (inv.payment_amount || 0)
+        summaries[inv.supplier_id].pending_amount += balance
+        summaries[inv.supplier_id].paid_amount += (inv.payment_amount || 0)
       } else {
         summaries[inv.supplier_id].pending_count += 1
         summaries[inv.supplier_id].pending_amount += inv.total_amount
@@ -389,13 +404,24 @@ export default function SupplierInvoicesPage() {
       return
     }
 
+    const amount = parseFloat(paymentAmount)
+    if (!paymentAmount || isNaN(amount) || amount <= 0) {
+      toast.error('Valid payment amount is required')
+      return
+    }
+
     setSavingPayment(true)
     try {
+      // Determine payment status based on amount vs invoice total
+      const invoiceTotal = selectedInvoice.total_amount
+      const status: 'partial' | 'paid' = amount >= invoiceTotal ? 'paid' : 'partial'
+
       const paymentData = {
         site_id: selectedSiteId,
         supplier_id: selectedInvoice.supplier_id,
         invoice_number: selectedInvoice.invoice_number,
-        payment_status: 'paid' as const,
+        payment_status: status,
+        payment_amount: amount,
         payment_reference: paymentReference.trim(),
         paid_at: new Date(paymentDate).toISOString(),
         notes: paymentNotes.trim() || null,
@@ -410,11 +436,12 @@ export default function SupplierInvoicesPage() {
 
       if (error) throw error
 
-      toast.success('Payment recorded successfully')
+      toast.success(`Payment recorded as ${status === 'paid' ? 'Fully Paid' : 'Partially Paid'}`)
       setPaymentDialogOpen(false)
       setSelectedInvoice(null)
       setPaymentReference('')
       setPaymentDate(new Date().toISOString().split('T')[0])
+      setPaymentAmount('')
       setPaymentNotes('')
 
       // Refresh data
@@ -601,8 +628,11 @@ export default function SupplierInvoicesPage() {
                           </TableCell>
                           <TableCell className="text-center">
                             {invoice.payment_status === 'paid' ? (
-                              <div className="flex flex-col items-center">
-                                <Badge className="bg-green-100 text-green-700 hover:bg-green-100">
+                              <div
+                                className="flex flex-col items-center cursor-pointer"
+                                onClick={() => setViewingInvoice(invoice)}
+                              >
+                                <Badge className="bg-green-100 text-green-700 hover:bg-green-200">
                                   <Check className="h-3 w-3 mr-1" />
                                   Paid
                                 </Badge>
@@ -612,12 +642,35 @@ export default function SupplierInvoicesPage() {
                                   </span>
                                 )}
                               </div>
+                            ) : invoice.payment_status === 'partial' ? (
+                              <div className="flex flex-col items-center gap-1">
+                                <Badge
+                                  className="bg-amber-100 text-amber-700 hover:bg-amber-200 cursor-pointer"
+                                  onClick={() => setViewingInvoice(invoice)}
+                                >
+                                  <Clock className="h-3 w-3 mr-1" />
+                                  Partial
+                                </Badge>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-6 text-xs"
+                                  onClick={() => {
+                                    setSelectedInvoice(invoice)
+                                    setPaymentAmount('')
+                                    setPaymentDialogOpen(true)
+                                  }}
+                                >
+                                  Add Payment
+                                </Button>
+                              </div>
                             ) : (
                               <Button
                                 variant="outline"
                                 size="sm"
                                 onClick={() => {
                                   setSelectedInvoice(invoice)
+                                  setPaymentAmount('')
                                   setPaymentDialogOpen(true)
                                 }}
                               >
@@ -687,6 +740,15 @@ export default function SupplierInvoicesPage() {
                       </span>
                       <span className="font-medium">{supplier.pending_count}</span>
                     </div>
+                    {supplier.partial_count > 0 && (
+                      <div className="flex justify-between text-sm">
+                        <span className="flex items-center gap-1 text-amber-600">
+                          <Clock className="h-3 w-3" />
+                          Partial
+                        </span>
+                        <span className="font-medium">{supplier.partial_count}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between text-sm">
                       <span className="flex items-center gap-1 text-green-600">
                         <CheckCircle2 className="h-3 w-3" />
@@ -743,17 +805,39 @@ export default function SupplierInvoicesPage() {
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="payment-date">
-                  Payment Date <span className="text-red-500">*</span>
-                </Label>
-                <Input
-                  id="payment-date"
-                  type="date"
-                  value={paymentDate}
-                  onChange={(e) => setPaymentDate(e.target.value)}
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="payment-date">
+                    Payment Date <span className="text-red-500">*</span>
+                  </Label>
+                  <Input
+                    id="payment-date"
+                    type="date"
+                    value={paymentDate}
+                    onChange={(e) => setPaymentDate(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="payment-amount">
+                    Amount <span className="text-red-500">*</span>
+                  </Label>
+                  <Input
+                    id="payment-amount"
+                    type="number"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={paymentAmount}
+                    onChange={(e) => setPaymentAmount(e.target.value)}
+                  />
+                </div>
               </div>
+
+              {paymentAmount && parseFloat(paymentAmount) < selectedInvoice.total_amount && (
+                <div className="p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+                  Amount is less than invoice total. This will be recorded as a partial payment.
+                </div>
+              )}
 
               <div className="space-y-2">
                 <Label htmlFor="payment-reference">
@@ -788,6 +872,7 @@ export default function SupplierInvoicesPage() {
                 setSelectedInvoice(null)
                 setPaymentReference('')
                 setPaymentDate(new Date().toISOString().split('T')[0])
+                setPaymentAmount('')
                 setPaymentNotes('')
               }}
             >
@@ -795,10 +880,102 @@ export default function SupplierInvoicesPage() {
             </Button>
             <Button
               onClick={handleMarkAsPaid}
-              disabled={savingPayment || !paymentReference.trim() || !paymentDate}
+              disabled={savingPayment || !paymentReference.trim() || !paymentDate || !paymentAmount}
             >
               {savingPayment && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               Confirm Payment
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* View Payment Details Dialog */}
+      <Dialog open={!!viewingInvoice} onOpenChange={(open) => !open && setViewingInvoice(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Payment Details</DialogTitle>
+            <DialogDescription>
+              Invoice: {viewingInvoice?.invoice_number}
+            </DialogDescription>
+          </DialogHeader>
+
+          {viewingInvoice && (
+            <div className="space-y-4">
+              <div className="p-4 bg-slate-50 rounded-lg space-y-3">
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Invoice Number</span>
+                  <span className="font-medium">{viewingInvoice.invoice_number}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Supplier</span>
+                  <span className="font-medium">{viewingInvoice.supplier_name}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-500">Invoice Amount</span>
+                  <span className="font-medium">{formatCurrency(viewingInvoice.total_amount)}</span>
+                </div>
+                <div className="border-t pt-3 mt-3">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Payment Status</span>
+                    <Badge className={cn(
+                      viewingInvoice.payment_status === 'paid'
+                        ? 'bg-green-100 text-green-700'
+                        : viewingInvoice.payment_status === 'partial'
+                        ? 'bg-amber-100 text-amber-700'
+                        : 'bg-slate-100 text-slate-700'
+                    )}>
+                      {viewingInvoice.payment_status === 'paid' ? 'Fully Paid' :
+                       viewingInvoice.payment_status === 'partial' ? 'Partially Paid' : 'Pending'}
+                    </Badge>
+                  </div>
+                </div>
+                {viewingInvoice.payment_amount && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Amount Paid</span>
+                    <span className="font-semibold text-green-600">
+                      {formatCurrency(viewingInvoice.payment_amount)}
+                    </span>
+                  </div>
+                )}
+                {viewingInvoice.payment_status === 'partial' && viewingInvoice.payment_amount && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Balance Due</span>
+                    <span className="font-semibold text-orange-600">
+                      {formatCurrency(viewingInvoice.total_amount - viewingInvoice.payment_amount)}
+                    </span>
+                  </div>
+                )}
+                {viewingInvoice.paid_at && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Payment Date</span>
+                    <span className="font-medium">
+                      {new Date(viewingInvoice.paid_at).toLocaleDateString('en-IN', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric'
+                      })}
+                    </span>
+                  </div>
+                )}
+                {viewingInvoice.payment_reference && (
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-500">Payment Reference</span>
+                    <span className="font-medium">{viewingInvoice.payment_reference}</span>
+                  </div>
+                )}
+                {viewingInvoice.payment_notes && (
+                  <div className="text-sm">
+                    <span className="text-slate-500 block mb-1">Notes</span>
+                    <span className="text-slate-700">{viewingInvoice.payment_notes}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewingInvoice(null)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>
