@@ -423,7 +423,7 @@ export default function SupplierInvoicesPage() {
   // Open DC file
   function openDcFile(filePath: string) {
     const { data } = supabase.storage
-      .from('grn-documents')
+      .from('compliance-docs')
       .getPublicUrl(filePath)
     window.open(data.publicUrl, '_blank')
   }
