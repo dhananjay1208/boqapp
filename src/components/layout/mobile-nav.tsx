@@ -47,6 +47,7 @@ const masterDataItems = [
   { name: 'Material List', href: '/master-data/materials', icon: ListTree },
   { name: 'Equipment', href: '/master-data/equipment', icon: Truck },
   { name: 'Manpower', href: '/master-data/manpower', icon: Users },
+  { name: 'Suppliers', href: '/master-data/suppliers', icon: Building2 },
 ]
 
 interface MobileNavProps {
