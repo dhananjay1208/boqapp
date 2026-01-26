@@ -24,6 +24,7 @@ app/
 │   │   ├── sites/              # Sites management
 │   │   ├── boq/                # BOQ Management
 │   │   ├── boq-progress/       # BOQ Progress tracking
+│   │   ├── workstations/       # Workstation progress tracking
 │   │   ├── material-grn/       # GRN (Goods Receipt Note)
 │   │   ├── inventory/          # Inventory view
 │   │   ├── expenses/           # Expense recording
@@ -32,6 +33,7 @@ app/
 │   │   ├── checklists/         # Checklist management
 │   │   ├── reports/            # Reports
 │   │   └── master-data/        # Master data
+│   │       ├── workstations/   # Workstation types
 │   │       ├── materials/      # Material master list
 │   │       ├── equipment/      # Equipment master
 │   │       ├── suppliers/      # Supplier master
@@ -111,7 +113,30 @@ app/
 - Activity checklists per BOQ headline
 - Status tracking (pending, in_progress, completed)
 
-### 9. Master Data (`/master-data/*`)
+### 9. Workstation Management (`/workstations`)
+- Track work progress at physical workstations (HT ROOM, ELE ROOM, FENCING, etc.)
+- Features:
+  - Site selector dropdown
+  - Assign workstations to sites from master list
+  - Workstation cards grid view (clickable)
+  - Detail view with BOQ progress summary table:
+    - Previous quantity (sum of all entries except latest)
+    - New quantity (latest entry)
+    - Upto-Date quantity (cumulative total)
+  - Grand total display
+  - Progress entries collapsible by date
+  - Add/Edit progress dialog with:
+    - Date picker
+    - Cascading dropdowns: Headline → Line Item
+    - Context display (unit, previous qty, BOQ qty)
+    - Quantity input
+    - Material consumption tracking (optional, dynamic rows)
+- Master Data (`/master-data/workstations`):
+  - 29 predefined workstations seeded
+  - Add/Edit/Delete workstation types
+
+### 10. Master Data (`/master-data/*`)
+- **Workstations** (`/master-data/workstations`): Workstation name, description
 - **Materials** (`/master-data/materials`): Category, name, unit, HSN code
 - **Suppliers** (`/master-data/suppliers`): Name, GSTIN, address, contact
 - **Equipment** (`/master-data/equipment`): Equipment name, hourly rate
@@ -165,6 +190,17 @@ app/
 - `supplier_invoice_payments` - Payment tracking for supplier invoices
   - Supports: pending, partial, paid status
   - Tracks: payment_amount, payment_reference, paid_at, notes
+
+### Workstation Tables
+- `master_workstations` - Workstation types (name, description, is_active)
+  - 29 predefined workstations seeded (HT ROOM, ELE ROOM, FENCING, etc.)
+- `site_workstations` - Workstations assigned to sites
+  - site_id, workstation_id, is_active
+  - Unique constraint on (site_id, workstation_id)
+- `workstation_boq_progress` - Progress tracking per workstation
+  - site_workstation_id, boq_line_item_id, entry_date, quantity, notes
+- `workstation_material_consumption` - Material usage per progress entry
+  - workstation_boq_progress_id, material_id, material_name, quantity, unit
 
 ## Supabase Storage Buckets
 - `compliance-docs` - GRN documents (DC, MIR, Test Cert, TDS)
@@ -222,6 +258,13 @@ const { data, error } = await supabase
     supplier:suppliers(id, supplier_name, gstin)
   `)
   .eq('site_id', selectedSiteId)
+
+// Note: Supabase returns joined relations as arrays
+// Transform to single object if needed:
+const transformedData = (data || []).map((item: any) => ({
+  ...item,
+  supplier: Array.isArray(item.supplier) ? item.supplier[0] : item.supplier
+}))
 ```
 
 ### Cascading Lookups (Manpower Example)
@@ -282,8 +325,11 @@ Navigation items are defined in:
 - `src/components/layout/sidebar.tsx` - Desktop sidebar
 - `src/components/layout/mobile-nav.tsx` - Mobile navigation
 
+Main navigation items:
+- Dashboard, Sites, BOQ Management, BOQ Progress, Workstations, Material GRN, Inventory, Expenses Recording, Expense Dashboard, Supplier Invoices, Checklists, Reports
+
 Master Data submenu items:
-- Material List, Equipment, Labour Contractors, Manpower Categories, Manpower Rates, Suppliers
+- Workstations, Material List, Equipment, Labour Contractors, Manpower Categories, Manpower Rates, Suppliers
 
 To add a new page:
 1. Create page in `src/app/[page-name]/page.tsx`
@@ -306,6 +352,7 @@ Key migrations:
 - `017_manpower_master_update.sql` - Manpower fields (rate, daily_hours, gender)
 - `018_expense_manpower_update.sql` - Manpower expense time tracking fields
 - `019_labour_contractors_and_categories.sql` - Labour contractors and categories tables
+- `020_workstation_management.sql` - Workstation tables and 29 predefined workstations
 
 ## Development
 ```bash
