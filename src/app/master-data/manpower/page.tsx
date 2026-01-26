@@ -350,6 +350,7 @@ export default function ManpowerMasterPage() {
                       <TableHead className="text-center">Gender</TableHead>
                       <TableHead className="text-right">Daily Rate</TableHead>
                       <TableHead className="text-center">Daily Hours</TableHead>
+                      <TableHead className="text-right">Hourly Rate</TableHead>
                       <TableHead className="w-[100px] text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -385,6 +386,11 @@ export default function ManpowerMasterPage() {
                         </TableCell>
                         <TableCell className="text-center">
                           <span className="text-sm text-slate-600">{item.daily_hours || 8} hrs</span>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <span className="text-sm font-mono text-slate-600">
+                            ₹{(item.rate / (item.daily_hours || 8)).toFixed(2)}/hr
+                          </span>
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
