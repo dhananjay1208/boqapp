@@ -38,13 +38,26 @@ import {
   Search,
   Loader2,
   IndianRupee,
-  Building2,
+  HardHat,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 
+interface LabourContractor {
+  id: string
+  name: string
+}
+
+interface ManpowerCategory {
+  id: string
+  name: string
+}
+
 interface Manpower {
   id: string
+  contractor_id: string | null
+  category_id: string | null
+  // Denormalized for display
   contractor_name: string | null
   category: string
   description: string | null
@@ -53,12 +66,19 @@ interface Manpower {
   daily_hours: number
   is_active: boolean
   created_at: string
+  // Joined data
+  labour_contractor?: { id: string; name: string } | null
+  manpower_category?: { id: string; name: string } | null
 }
 
 export default function ManpowerMasterPage() {
   const [manpower, setManpower] = useState<Manpower[]>([])
   const [filteredManpower, setFilteredManpower] = useState<Manpower[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Lookup data
+  const [contractors, setContractors] = useState<LabourContractor[]>([])
+  const [categories, setCategories] = useState<ManpowerCategory[]>([])
 
   // Filters
   const [searchTerm, setSearchTerm] = useState('')
@@ -71,41 +91,70 @@ export default function ManpowerMasterPage() {
 
   // Form state
   const [formData, setFormData] = useState({
-    contractor_name: '',
-    category: '',
-    description: '',
+    contractor_id: '',
+    category_id: '',
     gender: 'any' as 'male' | 'female' | 'any',
     rate: 0,
     daily_hours: 8,
   })
 
-  // Get unique contractors for filter
-  const contractors = [...new Set(manpower.map(m => m.contractor_name).filter(Boolean))] as string[]
-
   useEffect(() => {
-    fetchManpower()
+    fetchInitialData()
   }, [])
 
   useEffect(() => {
     filterManpower()
   }, [manpower, searchTerm, filterContractor])
 
+  async function fetchInitialData() {
+    try {
+      // Fetch contractors
+      const { data: contractorsData, error: contractorsError } = await supabase
+        .from('master_labour_contractors')
+        .select('id, name')
+        .eq('is_active', true)
+        .order('name')
+
+      if (contractorsError) throw contractorsError
+      setContractors(contractorsData || [])
+
+      // Fetch categories
+      const { data: categoriesData, error: categoriesError } = await supabase
+        .from('master_manpower_categories')
+        .select('id, name')
+        .eq('is_active', true)
+        .order('name')
+
+      if (categoriesError) throw categoriesError
+      setCategories(categoriesData || [])
+
+      // Fetch manpower with joins
+      await fetchManpower()
+    } catch (error) {
+      console.error('Error fetching initial data:', error)
+      toast.error('Failed to load data')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function fetchManpower() {
     try {
       const { data, error } = await supabase
         .from('master_manpower')
-        .select('*')
+        .select(`
+          *,
+          labour_contractor:master_labour_contractors(id, name),
+          manpower_category:master_manpower_categories(id, name)
+        `)
         .eq('is_active', true)
-        .order('contractor_name', { nullsFirst: false })
-        .order('category')
+        .order('created_at', { ascending: false })
 
       if (error) throw error
       setManpower(data || [])
     } catch (error) {
       console.error('Error fetching manpower:', error)
-      toast.error('Failed to load manpower categories')
-    } finally {
-      setLoading(false)
+      toast.error('Failed to load manpower data')
     }
   }
 
@@ -115,14 +164,15 @@ export default function ManpowerMasterPage() {
     if (searchTerm) {
       const term = searchTerm.toLowerCase()
       filtered = filtered.filter(m =>
-        m.category.toLowerCase().includes(term) ||
-        m.description?.toLowerCase().includes(term) ||
+        m.category?.toLowerCase().includes(term) ||
+        m.manpower_category?.name?.toLowerCase().includes(term) ||
+        m.labour_contractor?.name?.toLowerCase().includes(term) ||
         m.contractor_name?.toLowerCase().includes(term)
       )
     }
 
     if (filterContractor && filterContractor !== 'all') {
-      filtered = filtered.filter(m => m.contractor_name === filterContractor)
+      filtered = filtered.filter(m => m.contractor_id === filterContractor)
     }
 
     setFilteredManpower(filtered)
@@ -131,9 +181,8 @@ export default function ManpowerMasterPage() {
   function openCreateDialog() {
     setEditingManpower(null)
     setFormData({
-      contractor_name: '',
-      category: '',
-      description: '',
+      contractor_id: '',
+      category_id: '',
       gender: 'any',
       rate: 0,
       daily_hours: 8,
@@ -144,9 +193,8 @@ export default function ManpowerMasterPage() {
   function openEditDialog(item: Manpower) {
     setEditingManpower(item)
     setFormData({
-      contractor_name: item.contractor_name || '',
-      category: item.category,
-      description: item.description || '',
+      contractor_id: item.contractor_id || '',
+      category_id: item.category_id || '',
       gender: item.gender || 'any',
       rate: item.rate,
       daily_hours: item.daily_hours || 8,
@@ -155,8 +203,12 @@ export default function ManpowerMasterPage() {
   }
 
   async function handleSave() {
-    if (!formData.category.trim()) {
-      toast.error('Please enter manpower category')
+    if (!formData.contractor_id) {
+      toast.error('Please select a contractor')
+      return
+    }
+    if (!formData.category_id) {
+      toast.error('Please select a category')
       return
     }
     if (formData.rate < 0) {
@@ -164,12 +216,17 @@ export default function ManpowerMasterPage() {
       return
     }
 
+    // Get names for denormalized storage
+    const contractor = contractors.find(c => c.id === formData.contractor_id)
+    const category = categories.find(c => c.id === formData.category_id)
+
     setSaving(true)
     try {
       const saveData = {
-        contractor_name: formData.contractor_name.trim() || null,
-        category: formData.category.trim(),
-        description: formData.description.trim() || null,
+        contractor_id: formData.contractor_id,
+        category_id: formData.category_id,
+        contractor_name: contractor?.name || null,
+        category: category?.name || '',
         gender: formData.gender,
         rate: formData.rate,
         daily_hours: formData.daily_hours,
@@ -182,28 +239,29 @@ export default function ManpowerMasterPage() {
           .eq('id', editingManpower.id)
 
         if (error) throw error
-        toast.success('Manpower category updated successfully')
+        toast.success('Manpower rate updated successfully')
       } else {
         const { error } = await supabase
           .from('master_manpower')
           .insert(saveData)
 
         if (error) throw error
-        toast.success('Manpower category created successfully')
+        toast.success('Manpower rate created successfully')
       }
 
       setDialogOpen(false)
       fetchManpower()
     } catch (error: any) {
       console.error('Error saving manpower:', error)
-      toast.error(error?.message || 'Failed to save manpower category')
+      toast.error(error?.message || 'Failed to save manpower rate')
     } finally {
       setSaving(false)
     }
   }
 
   async function handleDelete(item: Manpower) {
-    if (!confirm(`Delete "${item.category}"? This action cannot be undone.`)) return
+    const categoryName = item.manpower_category?.name || item.category
+    if (!confirm(`Delete this manpower rate entry? This action cannot be undone.`)) return
 
     try {
       const { error } = await supabase
@@ -212,11 +270,11 @@ export default function ManpowerMasterPage() {
         .eq('id', item.id)
 
       if (error) throw error
-      toast.success('Manpower category deleted')
+      toast.success('Manpower rate deleted')
       fetchManpower()
     } catch (error) {
       console.error('Error deleting manpower:', error)
-      toast.error('Failed to delete manpower category')
+      toast.error('Failed to delete manpower rate')
     }
   }
 
@@ -239,11 +297,11 @@ export default function ManpowerMasterPage() {
   if (loading) {
     return (
       <div className="flex flex-col min-h-screen">
-        <Header title="Manpower Master" />
+        <Header title="Manpower Rates" />
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <Loader2 className="h-8 w-8 animate-spin text-blue-600 mx-auto mb-4" />
-            <p className="text-slate-500">Loading manpower categories...</p>
+            <p className="text-slate-500">Loading manpower rates...</p>
           </div>
         </div>
       </div>
@@ -252,7 +310,7 @@ export default function ManpowerMasterPage() {
 
   return (
     <div className="flex flex-col min-h-screen">
-      <Header title="Manpower Master" />
+      <Header title="Manpower Rates" />
 
       <div className="flex-1 p-4 md:p-6 space-y-6">
         {/* Header Card */}
@@ -262,15 +320,15 @@ export default function ManpowerMasterPage() {
               <div>
                 <CardTitle className="flex items-center gap-2">
                   <Users className="h-5 w-5" />
-                  Manpower Master
+                  Manpower Rates
                 </CardTitle>
                 <CardDescription>
-                  Manage manpower categories, contractors, and rates
+                  Define rates for contractor + category + gender combinations
                 </CardDescription>
               </div>
               <Button onClick={openCreateDialog}>
                 <Plus className="h-4 w-4 mr-2" />
-                Add Manpower
+                Add Rate
               </Button>
             </div>
           </CardHeader>
@@ -281,7 +339,7 @@ export default function ManpowerMasterPage() {
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
                   <Input
-                    placeholder="Search by category, description, or contractor..."
+                    placeholder="Search by category or contractor..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="pl-10"
@@ -291,14 +349,14 @@ export default function ManpowerMasterPage() {
               {contractors.length > 0 && (
                 <Select value={filterContractor} onValueChange={setFilterContractor}>
                   <SelectTrigger className="w-full sm:w-[200px]">
-                    <Building2 className="h-4 w-4 mr-2" />
+                    <HardHat className="h-4 w-4 mr-2" />
                     <SelectValue placeholder="All Contractors" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Contractors</SelectItem>
                     {contractors.map((contractor) => (
-                      <SelectItem key={contractor} value={contractor}>
-                        {contractor}
+                      <SelectItem key={contractor.id} value={contractor.id}>
+                        {contractor.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -308,9 +366,12 @@ export default function ManpowerMasterPage() {
 
             {/* Stats */}
             <div className="flex gap-4 mt-4 text-sm text-slate-600">
-              <span>{filteredManpower.length} manpower categories</span>
+              <span>{filteredManpower.length} manpower rates</span>
               {contractors.length > 0 && (
-                <span>• {contractors.length} contractors</span>
+                <span>| {contractors.length} contractors</span>
+              )}
+              {categories.length > 0 && (
+                <span>| {categories.length} categories</span>
               )}
             </div>
           </CardContent>
@@ -322,16 +383,16 @@ export default function ManpowerMasterPage() {
             <CardContent className="py-12">
               <div className="text-center">
                 <Users className="h-12 w-12 mx-auto text-slate-300 mb-4" />
-                <h3 className="text-lg font-medium text-slate-900 mb-2">No Manpower Categories Found</h3>
+                <h3 className="text-lg font-medium text-slate-900 mb-2">No Manpower Rates Found</h3>
                 <p className="text-slate-500 mb-4">
                   {searchTerm || filterContractor !== 'all'
                     ? 'Try adjusting your search or filter'
-                    : 'Add your first manpower category to get started'}
+                    : 'Add your first manpower rate to get started'}
                 </p>
                 {!searchTerm && filterContractor === 'all' && (
                   <Button onClick={openCreateDialog}>
                     <Plus className="h-4 w-4 mr-2" />
-                    Add Manpower
+                    Add Rate
                   </Button>
                 )}
               </div>
@@ -346,7 +407,6 @@ export default function ManpowerMasterPage() {
                     <TableRow>
                       <TableHead>Contractor</TableHead>
                       <TableHead>Category</TableHead>
-                      <TableHead>Description</TableHead>
                       <TableHead className="text-center">Gender</TableHead>
                       <TableHead className="text-right">Daily Rate</TableHead>
                       <TableHead className="text-center">Daily Hours</TableHead>
@@ -358,20 +418,17 @@ export default function ManpowerMasterPage() {
                     {filteredManpower.map((item) => (
                       <TableRow key={item.id}>
                         <TableCell>
-                          {item.contractor_name ? (
-                            <div className="flex items-center gap-2">
-                              <Building2 className="h-4 w-4 text-slate-400" />
-                              <span className="font-medium">{item.contractor_name}</span>
-                            </div>
-                          ) : (
-                            <span className="text-slate-400">-</span>
-                          )}
+                          <div className="flex items-center gap-2">
+                            <HardHat className="h-4 w-4 text-orange-500" />
+                            <span className="font-medium">
+                              {item.labour_contractor?.name || item.contractor_name || '-'}
+                            </span>
+                          </div>
                         </TableCell>
                         <TableCell>
-                          <p className="font-medium">{item.category}</p>
-                        </TableCell>
-                        <TableCell>
-                          <p className="text-sm text-slate-500">{item.description || '-'}</p>
+                          <p className="font-medium">
+                            {item.manpower_category?.name || item.category}
+                          </p>
                         </TableCell>
                         <TableCell className="text-center">
                           <Badge className={getGenderBadgeColor(item.gender)}>
@@ -426,53 +483,65 @@ export default function ManpowerMasterPage() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>
-              {editingManpower ? 'Edit Manpower' : 'Add New Manpower'}
+              {editingManpower ? 'Edit Manpower Rate' : 'Add New Manpower Rate'}
             </DialogTitle>
             <DialogDescription>
               {editingManpower
-                ? 'Update the manpower category details'
-                : 'Add a new manpower category to the master list'}
+                ? 'Update the manpower rate details'
+                : 'Define a rate for a contractor + category + gender combination'}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-4">
-            {/* Contractor Name */}
+            {/* Contractor */}
             <div className="space-y-2">
-              <Label htmlFor="contractor_name">Contractor Name</Label>
-              <Input
-                id="contractor_name"
-                placeholder="e.g., ABC Contractors, XYZ Labor Supply"
-                value={formData.contractor_name}
-                onChange={(e) => setFormData({ ...formData, contractor_name: e.target.value })}
-              />
-              <p className="text-xs text-slate-500">Leave empty if not specific to a contractor</p>
+              <Label>Labour Contractor *</Label>
+              <Select
+                value={formData.contractor_id}
+                onValueChange={(value) => setFormData({ ...formData, contractor_id: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select contractor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {contractors.map((contractor) => (
+                    <SelectItem key={contractor.id} value={contractor.id}>
+                      {contractor.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {contractors.length === 0 && (
+                <p className="text-xs text-amber-600">No contractors found. Add contractors first.</p>
+              )}
             </div>
 
-            {/* Category Name */}
+            {/* Category */}
             <div className="space-y-2">
-              <Label htmlFor="category">Category *</Label>
-              <Input
-                id="category"
-                placeholder="e.g., Mason, Helper, Carpenter, Welder"
-                value={formData.category}
-                onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-              />
-            </div>
-
-            {/* Description */}
-            <div className="space-y-2">
-              <Label htmlFor="description">Description</Label>
-              <Input
-                id="description"
-                placeholder="e.g., Skilled brick mason, General helper"
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              />
+              <Label>Manpower Category *</Label>
+              <Select
+                value={formData.category_id}
+                onValueChange={(value) => setFormData({ ...formData, category_id: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select category" />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map((category) => (
+                    <SelectItem key={category.id} value={category.id}>
+                      {category.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {categories.length === 0 && (
+                <p className="text-xs text-amber-600">No categories found. Add categories first.</p>
+              )}
             </div>
 
             {/* Gender */}
             <div className="space-y-2">
-              <Label htmlFor="gender">Category Gender</Label>
+              <Label htmlFor="gender">Gender</Label>
               <Select
                 value={formData.gender}
                 onValueChange={(value: 'male' | 'female' | 'any') => setFormData({ ...formData, gender: value })}
@@ -486,7 +555,7 @@ export default function ManpowerMasterPage() {
                   <SelectItem value="female">Female</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-slate-500">Specify if this category is gender-specific</p>
+              <p className="text-xs text-slate-500">Specify if rate differs by gender</p>
             </div>
 
             {/* Daily Rate and Hours */}
@@ -534,7 +603,7 @@ export default function ManpowerMasterPage() {
               Cancel
             </Button>
             <Button onClick={handleSave} disabled={saving}>
-              {saving ? 'Saving...' : editingManpower ? 'Update' : 'Add Manpower'}
+              {saving ? 'Saving...' : editingManpower ? 'Update' : 'Add Rate'}
             </Button>
           </DialogFooter>
         </DialogContent>

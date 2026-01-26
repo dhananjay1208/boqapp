@@ -23,6 +23,8 @@ import {
   PieChart,
   TrendingUp,
   CreditCard,
+  HardHat,
+  Tag,
 } from 'lucide-react'
 
 interface NavItem {
@@ -57,7 +59,9 @@ const masterDataGroup: NavGroup = {
   items: [
     { name: 'Material List', href: '/master-data/materials', icon: ListTree },
     { name: 'Equipment', href: '/master-data/equipment', icon: Truck },
-    { name: 'Manpower', href: '/master-data/manpower', icon: Users },
+    { name: 'Labour Contractors', href: '/master-data/labour-contractors', icon: HardHat },
+    { name: 'Manpower Categories', href: '/master-data/manpower-categories', icon: Tag },
+    { name: 'Manpower Rates', href: '/master-data/manpower', icon: Users },
     { name: 'Suppliers', href: '/master-data/suppliers', icon: Building2 },
   ],
 }
@@ -133,7 +137,7 @@ export function Sidebar({ className }: SidebarProps) {
             <div className="mt-1 ml-4 space-y-1">
               {masterDataGroup.items.map((item) => {
                 const isActive = pathname === item.href ||
-                  pathname.startsWith(item.href)
+                  pathname.startsWith(item.href + '/')
 
                 return (
                   <Link

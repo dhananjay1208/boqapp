@@ -29,6 +29,8 @@ import {
   PieChart,
   TrendingUp,
   CreditCard,
+  HardHat,
+  Tag,
 } from 'lucide-react'
 
 const navigation = [
@@ -48,7 +50,9 @@ const navigation = [
 const masterDataItems = [
   { name: 'Material List', href: '/master-data/materials', icon: ListTree },
   { name: 'Equipment', href: '/master-data/equipment', icon: Truck },
-  { name: 'Manpower', href: '/master-data/manpower', icon: Users },
+  { name: 'Labour Contractors', href: '/master-data/labour-contractors', icon: HardHat },
+  { name: 'Manpower Categories', href: '/master-data/manpower-categories', icon: Tag },
+  { name: 'Manpower Rates', href: '/master-data/manpower', icon: Users },
   { name: 'Suppliers', href: '/master-data/suppliers', icon: Building2 },
 ]
 
@@ -122,7 +126,7 @@ export function MobileNav({ open, onOpenChange }: MobileNavProps) {
               <div className="mt-1 ml-4 space-y-1">
                 {masterDataItems.map((item) => {
                   const isActive = pathname === item.href ||
-                    pathname.startsWith(item.href)
+                    pathname.startsWith(item.href + '/')
 
                   return (
                     <Link

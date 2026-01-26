@@ -42,19 +42,40 @@ import {
   Loader2,
   IndianRupee,
   Calculator,
+  Clock,
+  Download,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
+import * as XLSX from 'xlsx'
 
 interface Site {
   id: string
   name: string
 }
 
+interface LabourContractor {
+  id: string
+  name: string
+}
+
+interface ManpowerCategory {
+  id: string
+  name: string
+}
+
 interface Manpower {
   id: string
+  contractor_id: string | null
+  category_id: string | null
+  contractor_name: string | null
   category: string
-  hourly_rate: number
+  description: string | null
+  gender: 'male' | 'female' | 'any'
+  rate: number
+  daily_hours: number
+  labour_contractor?: { id: string; name: string } | null
+  manpower_category?: { id: string; name: string } | null
 }
 
 interface Equipment {
@@ -63,12 +84,22 @@ interface Equipment {
   hourly_rate: number
 }
 
-interface MaterialExpense {
+interface GRNInvoice {
   id: string
-  expense_date: string
-  amount: number
-  invoice_reference: string | null
-  notes: string | null
+  invoice_number: string
+  grn_date: string
+  supplier: {
+    id: string
+    supplier_name: string
+  }
+  grn_line_items: {
+    id: string
+    material_name: string
+    quantity: number
+    unit: string
+    amount_without_gst: number
+    amount_with_gst: number
+  }[]
 }
 
 interface ManpowerExpense {
@@ -76,6 +107,11 @@ interface ManpowerExpense {
   expense_date: string
   manpower_id: string
   manpower_category: string
+  contractor_name: string | null
+  gender: string | null
+  num_persons: number
+  start_time: string | null
+  end_time: string | null
   hours: number
   rate: number
   amount: number
@@ -109,30 +145,38 @@ export default function ExpensesPage() {
   const [loadingExpenses, setLoadingExpenses] = useState(false)
 
   // Master data
+  const [contractors, setContractors] = useState<LabourContractor[]>([])
+  const [manpowerCategories, setManpowerCategories] = useState<ManpowerCategory[]>([])
   const [manpowerList, setManpowerList] = useState<Manpower[]>([])
   const [equipmentList, setEquipmentList] = useState<Equipment[]>([])
 
   // Expenses
-  const [materialExpenses, setMaterialExpenses] = useState<MaterialExpense[]>([])
+  const [grnInvoices, setGrnInvoices] = useState<GRNInvoice[]>([])
   const [manpowerExpenses, setManpowerExpenses] = useState<ManpowerExpense[]>([])
   const [equipmentExpenses, setEquipmentExpenses] = useState<EquipmentExpense[]>([])
   const [otherExpenses, setOtherExpenses] = useState<OtherExpense[]>([])
 
   // Dialog states
-  const [materialDialogOpen, setMaterialDialogOpen] = useState(false)
   const [manpowerDialogOpen, setManpowerDialogOpen] = useState(false)
   const [equipmentDialogOpen, setEquipmentDialogOpen] = useState(false)
   const [otherDialogOpen, setOtherDialogOpen] = useState(false)
 
   // Editing states
-  const [editingMaterial, setEditingMaterial] = useState<MaterialExpense | null>(null)
   const [editingManpower, setEditingManpower] = useState<ManpowerExpense | null>(null)
   const [editingEquipment, setEditingEquipment] = useState<EquipmentExpense | null>(null)
   const [editingOther, setEditingOther] = useState<OtherExpense | null>(null)
 
   // Form states
-  const [materialForm, setMaterialForm] = useState({ amount: 0, invoice_reference: '', notes: '' })
-  const [manpowerForm, setManpowerForm] = useState({ manpower_id: '', hours: 0, notes: '' })
+  const [manpowerForm, setManpowerForm] = useState({
+    contractor_id: '',
+    category_id: '',
+    gender: '',
+    manpower_id: '',
+    num_persons: 1,
+    start_time: '08:00',
+    end_time: '17:00',
+    notes: ''
+  })
   const [equipmentForm, setEquipmentForm] = useState({ equipment_id: '', hours: 0, notes: '' })
   const [otherForm, setOtherForm] = useState({ description: '', amount: 0, notes: '' })
 
@@ -163,12 +207,36 @@ export default function ExpensesPage() {
         setSelectedSiteId(sitesData[0].id)
       }
 
+      // Fetch labour contractors
+      const { data: contractorsData, error: contractorsError } = await supabase
+        .from('master_labour_contractors')
+        .select('id, name')
+        .eq('is_active', true)
+        .order('name')
+
+      if (contractorsError) throw contractorsError
+      setContractors(contractorsData || [])
+
       // Fetch manpower categories
+      const { data: categoriesData, error: categoriesError } = await supabase
+        .from('master_manpower_categories')
+        .select('id, name')
+        .eq('is_active', true)
+        .order('name')
+
+      if (categoriesError) throw categoriesError
+      setManpowerCategories(categoriesData || [])
+
+      // Fetch manpower rates with joins
       const { data: manpowerData, error: manpowerError } = await supabase
         .from('master_manpower')
-        .select('id, category, hourly_rate')
+        .select(`
+          *,
+          labour_contractor:master_labour_contractors(id, name),
+          manpower_category:master_manpower_categories(id, name)
+        `)
         .eq('is_active', true)
-        .order('category')
+        .order('created_at', { ascending: false })
 
       if (manpowerError) throw manpowerError
       setManpowerList(manpowerData || [])
@@ -193,14 +261,22 @@ export default function ExpensesPage() {
   async function fetchExpenses() {
     setLoadingExpenses(true)
     try {
-      // Fetch all expense types in parallel
-      const [materialRes, manpowerRes, equipmentRes, otherRes] = await Promise.all([
-        supabase
-          .from('expense_material')
-          .select('*')
-          .eq('site_id', selectedSiteId)
-          .eq('expense_date', selectedDate)
-          .order('created_at'),
+      // Fetch GRN invoices for material expenses (from Material GRN module)
+      const grnRes = await supabase
+        .from('grn_invoices')
+        .select(`
+          id,
+          invoice_number,
+          grn_date,
+          supplier:suppliers(id, supplier_name),
+          grn_line_items(id, material_name, quantity, unit, amount_without_gst, amount_with_gst)
+        `)
+        .eq('site_id', selectedSiteId)
+        .eq('grn_date', selectedDate)
+        .order('created_at')
+
+      // Fetch other expense types in parallel
+      const [manpowerRes, equipmentRes, otherRes] = await Promise.all([
         supabase
           .from('expense_manpower')
           .select('*')
@@ -221,7 +297,7 @@ export default function ExpensesPage() {
           .order('created_at'),
       ])
 
-      setMaterialExpenses(materialRes.data || [])
+      setGrnInvoices(grnRes.data || [])
       setManpowerExpenses(manpowerRes.data || [])
       setEquipmentExpenses(equipmentRes.data || [])
       setOtherExpenses(otherRes.data || [])
@@ -233,120 +309,280 @@ export default function ExpensesPage() {
     }
   }
 
-  // Material expense handlers
-  function openMaterialDialog(expense?: MaterialExpense) {
-    if (expense) {
-      setEditingMaterial(expense)
-      setMaterialForm({
-        amount: expense.amount,
-        invoice_reference: expense.invoice_reference || '',
-        notes: expense.notes || '',
-      })
-    } else {
-      setEditingMaterial(null)
-      setMaterialForm({ amount: 0, invoice_reference: '', notes: '' })
-    }
-    setMaterialDialogOpen(true)
-  }
-
-  async function saveMaterialExpense() {
-    if (materialForm.amount <= 0) {
-      toast.error('Amount must be greater than 0')
-      return
-    }
-
-    setSaving(true)
-    try {
-      if (editingMaterial) {
-        const { error } = await supabase
-          .from('expense_material')
-          .update({
-            amount: materialForm.amount,
-            invoice_reference: materialForm.invoice_reference || null,
-            notes: materialForm.notes || null,
-          })
-          .eq('id', editingMaterial.id)
-
-        if (error) throw error
-        toast.success('Material expense updated')
-      } else {
-        const { error } = await supabase
-          .from('expense_material')
-          .insert({
-            site_id: selectedSiteId,
-            expense_date: selectedDate,
-            amount: materialForm.amount,
-            invoice_reference: materialForm.invoice_reference || null,
-            notes: materialForm.notes || null,
-          })
-
-        if (error) throw error
-        toast.success('Material expense added')
-      }
-
-      setMaterialDialogOpen(false)
-      fetchExpenses()
-    } catch (error) {
-      console.error('Error saving material expense:', error)
-      toast.error('Failed to save expense')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function deleteMaterialExpense(id: string) {
-    if (!confirm('Delete this expense?')) return
-
-    try {
-      const { error } = await supabase.from('expense_material').delete().eq('id', id)
-      if (error) throw error
-      toast.success('Expense deleted')
-      fetchExpenses()
-    } catch (error) {
-      console.error('Error deleting expense:', error)
-      toast.error('Failed to delete expense')
-    }
+  // Calculate total material amount from GRN invoices
+  function getTotalMaterialAmount(): number {
+    return grnInvoices.reduce((total, invoice) => {
+      const invoiceTotal = invoice.grn_line_items.reduce((sum, item) => sum + (item.amount_with_gst || 0), 0)
+      return total + invoiceTotal
+    }, 0)
   }
 
   // Manpower expense handlers
   function openManpowerDialog(expense?: ManpowerExpense) {
     if (expense) {
       setEditingManpower(expense)
+      // Find the manpower entry to get contractor/category/gender
+      const mp = manpowerList.find(m => m.id === expense.manpower_id)
       setManpowerForm({
+        contractor_id: mp?.contractor_id || '',
+        category_id: mp?.category_id || '',
+        gender: expense.gender || mp?.gender || '',
         manpower_id: expense.manpower_id,
-        hours: expense.hours,
+        num_persons: expense.num_persons || 1,
+        start_time: expense.start_time || '08:00',
+        end_time: expense.end_time || '17:00',
         notes: expense.notes || '',
       })
     } else {
       setEditingManpower(null)
-      setManpowerForm({ manpower_id: '', hours: 0, notes: '' })
+      setManpowerForm({
+        contractor_id: '',
+        category_id: '',
+        gender: '',
+        manpower_id: '',
+        num_persons: 1,
+        start_time: '08:00',
+        end_time: '17:00',
+        notes: ''
+      })
     }
     setManpowerDialogOpen(true)
   }
 
-  function getManpowerRate(manpowerId: string): number {
-    const mp = manpowerList.find(m => m.id === manpowerId)
-    return mp?.hourly_rate || 0
+  // Get categories available for selected contractor
+  function getCategoriesForContractor(contractorId: string): ManpowerCategory[] {
+    const categoryIds = manpowerList
+      .filter(m => m.contractor_id === contractorId)
+      .map(m => m.category_id)
+      .filter((id): id is string => id !== null)
+    const uniqueIds = [...new Set(categoryIds)]
+    return manpowerCategories.filter(c => uniqueIds.includes(c.id))
+  }
+
+  // Get genders available for selected contractor and category
+  function getGendersForContractorAndCategory(contractorId: string, categoryId: string): { gender: string; label: string }[] {
+    const filtered = manpowerList.filter(m =>
+      m.contractor_id === contractorId && m.category_id === categoryId
+    )
+    const genders = filtered.map(m => m.gender)
+    const uniqueGenders = [...new Set(genders)]
+    return uniqueGenders.map(g => ({
+      gender: g,
+      label: g === 'male' ? 'Male' : g === 'female' ? 'Female' : 'Any'
+    }))
+  }
+
+  // Find matching manpower entry based on contractor, category, gender
+  function findManpowerEntry(contractorId: string, categoryId: string, gender: string): Manpower | undefined {
+    return manpowerList.find(m =>
+      m.contractor_id === contractorId &&
+      m.category_id === categoryId &&
+      m.gender === gender
+    )
+  }
+
+  // Calculate total hours from start and end time
+  function calculateHours(startTime: string, endTime: string): number {
+    if (!startTime || !endTime) return 0
+    const [startH, startM] = startTime.split(':').map(Number)
+    const [endH, endM] = endTime.split(':').map(Number)
+    const startMinutes = startH * 60 + startM
+    const endMinutes = endH * 60 + endM
+    const diffMinutes = endMinutes - startMinutes
+    return Math.max(0, diffMinutes / 60)
   }
 
   function getManpowerCategory(manpowerId: string): string {
     const mp = manpowerList.find(m => m.id === manpowerId)
-    return mp?.category || ''
+    return mp?.manpower_category?.name || mp?.category || ''
+  }
+
+  // Export to Excel function
+  function exportToExcel() {
+    const siteName = sites.find(s => s.id === selectedSiteId)?.name || 'Unknown Site'
+    const formattedDate = new Date(selectedDate).toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric'
+    })
+
+    // Create workbook
+    const wb = XLSX.utils.book_new()
+
+    // ============ SUMMARY SHEET ============
+    const summaryData = [
+      ['DAILY EXPENSE REPORT'],
+      [],
+      ['Site:', siteName],
+      ['Date:', formattedDate],
+      ['Generated:', new Date().toLocaleString('en-IN')],
+      [],
+      ['EXPENSE SUMMARY'],
+      [],
+      ['Category', 'Amount (INR)'],
+      ['Material (from GRN)', materialTotal],
+      ['Manpower', manpowerTotal],
+      ['Equipment', equipmentTotal],
+      ['Other', otherTotal],
+      [],
+      ['GRAND TOTAL', grandTotal],
+    ]
+    const summaryWs = XLSX.utils.aoa_to_sheet(summaryData)
+    summaryWs['!cols'] = [{ wch: 25 }, { wch: 20 }]
+    XLSX.utils.book_append_sheet(wb, summaryWs, 'Summary')
+
+    // ============ MATERIAL SHEET (from GRN) ============
+    const materialRows: any[][] = [
+      ['MATERIAL EXPENSES (FROM GRN)'],
+      [],
+      ['Invoice No', 'Supplier', 'Material', 'Quantity', 'Unit', 'Amount (Excl GST)', 'Amount (Incl GST)'],
+    ]
+
+    grnInvoices.forEach(invoice => {
+      invoice.grn_line_items.forEach((item, idx) => {
+        materialRows.push([
+          idx === 0 ? invoice.invoice_number : '',
+          idx === 0 ? (invoice.supplier?.supplier_name || '') : '',
+          item.material_name,
+          item.quantity,
+          item.unit,
+          item.amount_without_gst,
+          item.amount_with_gst,
+        ])
+      })
+    })
+
+    if (grnInvoices.length > 0) {
+      materialRows.push([])
+      materialRows.push(['', '', '', '', 'TOTAL',
+        grnInvoices.reduce((sum, inv) => sum + inv.grn_line_items.reduce((s, i) => s + (i.amount_without_gst || 0), 0), 0),
+        materialTotal
+      ])
+    }
+
+    const materialWs = XLSX.utils.aoa_to_sheet(materialRows)
+    materialWs['!cols'] = [{ wch: 15 }, { wch: 20 }, { wch: 25 }, { wch: 10 }, { wch: 8 }, { wch: 15 }, { wch: 15 }]
+    XLSX.utils.book_append_sheet(wb, materialWs, 'Material')
+
+    // ============ MANPOWER SHEET ============
+    const manpowerRows: any[][] = [
+      ['MANPOWER EXPENSES'],
+      [],
+      ['Contractor', 'Category', 'Gender', 'Persons', 'Start Time', 'End Time', 'Hours', 'Rate/Hr', 'Amount', 'Remarks'],
+    ]
+
+    manpowerExpenses.forEach(exp => {
+      manpowerRows.push([
+        exp.contractor_name || '-',
+        exp.manpower_category,
+        exp.gender || '-',
+        exp.num_persons || 1,
+        exp.start_time || '-',
+        exp.end_time || '-',
+        exp.hours,
+        exp.rate,
+        exp.amount,
+        exp.notes || '',
+      ])
+    })
+
+    if (manpowerExpenses.length > 0) {
+      manpowerRows.push([])
+      manpowerRows.push(['', '', '', '', '', '', '', 'TOTAL', manpowerTotal, ''])
+    }
+
+    const manpowerWs = XLSX.utils.aoa_to_sheet(manpowerRows)
+    manpowerWs['!cols'] = [{ wch: 18 }, { wch: 15 }, { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 10 }, { wch: 8 }, { wch: 10 }, { wch: 12 }, { wch: 25 }]
+    XLSX.utils.book_append_sheet(wb, manpowerWs, 'Manpower')
+
+    // ============ EQUIPMENT SHEET ============
+    const equipmentRows: any[][] = [
+      ['EQUIPMENT EXPENSES'],
+      [],
+      ['Equipment', 'Hours', 'Rate/Hr', 'Amount', 'Notes'],
+    ]
+
+    equipmentExpenses.forEach(exp => {
+      equipmentRows.push([
+        exp.equipment_name,
+        exp.hours,
+        exp.rate,
+        exp.amount,
+        exp.notes || '',
+      ])
+    })
+
+    if (equipmentExpenses.length > 0) {
+      equipmentRows.push([])
+      equipmentRows.push(['', '', 'TOTAL', equipmentTotal, ''])
+    }
+
+    const equipmentWs = XLSX.utils.aoa_to_sheet(equipmentRows)
+    equipmentWs['!cols'] = [{ wch: 25 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 30 }]
+    XLSX.utils.book_append_sheet(wb, equipmentWs, 'Equipment')
+
+    // ============ OTHER EXPENSES SHEET ============
+    const otherRows: any[][] = [
+      ['OTHER EXPENSES'],
+      [],
+      ['Description', 'Amount', 'Notes'],
+    ]
+
+    otherExpenses.forEach(exp => {
+      otherRows.push([
+        exp.description,
+        exp.amount,
+        exp.notes || '',
+      ])
+    })
+
+    if (otherExpenses.length > 0) {
+      otherRows.push([])
+      otherRows.push(['TOTAL', otherTotal, ''])
+    }
+
+    const otherWs = XLSX.utils.aoa_to_sheet(otherRows)
+    otherWs['!cols'] = [{ wch: 35 }, { wch: 15 }, { wch: 30 }]
+    XLSX.utils.book_append_sheet(wb, otherWs, 'Other')
+
+    // Generate filename and download
+    const dateStr = selectedDate.replace(/-/g, '')
+    const siteNameClean = siteName.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20)
+    const filename = `Expenses_${siteNameClean}_${dateStr}.xlsx`
+
+    XLSX.writeFile(wb, filename)
+    toast.success('Expense report exported successfully')
   }
 
   async function saveManpowerExpense() {
-    if (!manpowerForm.manpower_id) {
-      toast.error('Please select a manpower category')
+    // Find the manpower entry based on selections
+    const mpEntry = findManpowerEntry(manpowerForm.contractor_id, manpowerForm.category_id, manpowerForm.gender)
+
+    if (!mpEntry) {
+      toast.error('Please select contractor, category, and gender')
       return
     }
-    if (manpowerForm.hours <= 0) {
-      toast.error('Hours must be greater than 0')
+    if (manpowerForm.num_persons <= 0) {
+      toast.error('Number of persons must be at least 1')
+      return
+    }
+    if (!manpowerForm.start_time || !manpowerForm.end_time) {
+      toast.error('Please select start and end time')
       return
     }
 
-    const rate = getManpowerRate(manpowerForm.manpower_id)
-    const amount = manpowerForm.hours * rate
-    const category = getManpowerCategory(manpowerForm.manpower_id)
+    const hours = calculateHours(manpowerForm.start_time, manpowerForm.end_time)
+    if (hours <= 0) {
+      toast.error('End time must be after start time')
+      return
+    }
+
+    const hourlyRate = mpEntry.rate / (mpEntry.daily_hours || 8)
+    const amount = hourlyRate * hours * manpowerForm.num_persons
+
+    // Get names for denormalized storage
+    const contractorName = mpEntry.labour_contractor?.name || mpEntry.contractor_name
+    const categoryName = mpEntry.manpower_category?.name || mpEntry.category
 
     setSaving(true)
     try {
@@ -354,10 +590,15 @@ export default function ExpensesPage() {
         const { error } = await supabase
           .from('expense_manpower')
           .update({
-            manpower_id: manpowerForm.manpower_id,
-            manpower_category: category,
-            hours: manpowerForm.hours,
-            rate: rate,
+            manpower_id: mpEntry.id,
+            manpower_category: categoryName,
+            contractor_name: contractorName || null,
+            gender: mpEntry.gender,
+            num_persons: manpowerForm.num_persons,
+            start_time: manpowerForm.start_time,
+            end_time: manpowerForm.end_time,
+            hours: hours,
+            rate: hourlyRate,
             amount: amount,
             notes: manpowerForm.notes || null,
           })
@@ -371,10 +612,15 @@ export default function ExpensesPage() {
           .insert({
             site_id: selectedSiteId,
             expense_date: selectedDate,
-            manpower_id: manpowerForm.manpower_id,
-            manpower_category: category,
-            hours: manpowerForm.hours,
-            rate: rate,
+            manpower_id: mpEntry.id,
+            manpower_category: categoryName,
+            contractor_name: contractorName || null,
+            gender: mpEntry.gender,
+            num_persons: manpowerForm.num_persons,
+            start_time: manpowerForm.start_time,
+            end_time: manpowerForm.end_time,
+            hours: hours,
+            rate: hourlyRate,
             amount: amount,
             notes: manpowerForm.notes || null,
           })
@@ -586,7 +832,7 @@ export default function ExpensesPage() {
   }
 
   // Calculate totals
-  const materialTotal = materialExpenses.reduce((sum, e) => sum + e.amount, 0)
+  const materialTotal = getTotalMaterialAmount()
   const manpowerTotal = manpowerExpenses.reduce((sum, e) => sum + e.amount, 0)
   const equipmentTotal = equipmentExpenses.reduce((sum, e) => sum + e.amount, 0)
   const otherTotal = otherExpenses.reduce((sum, e) => sum + e.amount, 0)
@@ -651,6 +897,17 @@ export default function ExpensesPage() {
                     className="pl-10"
                   />
                 </div>
+              </div>
+              <div className="flex items-end">
+                <Button
+                  variant="outline"
+                  onClick={exportToExcel}
+                  disabled={!selectedSiteId || loadingExpenses}
+                  className="w-full sm:w-auto"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Export
+                </Button>
               </div>
             </div>
           </CardContent>
@@ -743,15 +1000,9 @@ export default function ExpensesPage() {
             <TabsContent value="material">
               <Card>
                 <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle className="text-base">Material Expenses</CardTitle>
-                      <CardDescription>Record material expenses as per GRN invoice amounts</CardDescription>
-                    </div>
-                    <Button size="sm" onClick={() => openMaterialDialog()}>
-                      <Plus className="h-4 w-4 mr-1" />
-                      Add
-                    </Button>
+                  <div>
+                    <CardTitle className="text-base">Material Expenses (from GRN)</CardTitle>
+                    <CardDescription>Auto-fetched from Material GRN module for this date</CardDescription>
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -759,37 +1010,62 @@ export default function ExpensesPage() {
                     <div className="text-center py-8">
                       <Loader2 className="h-6 w-6 animate-spin mx-auto text-slate-400" />
                     </div>
-                  ) : materialExpenses.length === 0 ? (
+                  ) : grnInvoices.length === 0 ? (
                     <div className="text-center py-8 text-slate-500">
                       <Package className="h-10 w-10 mx-auto text-slate-300 mb-2" />
-                      <p>No material expenses recorded for this date</p>
+                      <p>No GRN invoices recorded for this date</p>
+                      <p className="text-xs mt-1">Add GRN entries in Material GRN module</p>
                     </div>
                   ) : (
-                    <div className="space-y-2">
-                      {materialExpenses.map((expense) => (
-                        <div key={expense.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
+                    <div className="space-y-3">
+                      {grnInvoices.map((invoice) => {
+                        const invoiceTotal = invoice.grn_line_items.reduce(
+                          (sum, item) => sum + (item.amount_with_gst || 0), 0
+                        )
+                        const invoiceTotalExclGst = invoice.grn_line_items.reduce(
+                          (sum, item) => sum + (item.amount_without_gst || 0), 0
+                        )
+                        return (
+                          <div key={invoice.id} className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                            <div className="flex items-start justify-between mb-2">
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-medium text-sm">{invoice.invoice_number}</span>
+                                  <Badge variant="outline" className="text-xs">
+                                    {invoice.supplier?.supplier_name || 'Unknown Supplier'}
+                                  </Badge>
+                                </div>
+                              </div>
                               <Badge variant="secondary" className="font-mono">
                                 <IndianRupee className="h-3 w-3 mr-1" />
-                                {expense.amount.toLocaleString('en-IN')}
+                                {invoiceTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                               </Badge>
-                              {expense.invoice_reference && (
-                                <span className="text-xs text-slate-500">Inv: {expense.invoice_reference}</span>
-                              )}
                             </div>
-                            {expense.notes && <p className="text-xs text-slate-500 mt-1">{expense.notes}</p>}
+                            <div className="space-y-1">
+                              {invoice.grn_line_items.map((item) => (
+                                <div key={item.id} className="flex items-center justify-between text-xs text-slate-600 pl-2 border-l-2 border-slate-300">
+                                  <span>{item.material_name} ({item.quantity} {item.unit})</span>
+                                  <span className="font-mono">₹{item.amount_with_gst?.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="mt-2 pt-2 border-t border-slate-200 flex justify-between text-xs text-slate-500">
+                              <span>Excl. GST: ₹{invoiceTotalExclGst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                              <span>GST: ₹{(invoiceTotal - invoiceTotalExclGst).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                            </div>
                           </div>
-                          <div className="flex gap-1">
-                            <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openMaterialDialog(expense)}>
-                              <Pencil className="h-3 w-3" />
-                            </Button>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600" onClick={() => deleteMaterialExpense(expense.id)}>
-                              <Trash2 className="h-3 w-3" />
-                            </Button>
-                          </div>
+                        )
+                      })}
+                      {/* Total Summary */}
+                      <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-blue-700">Total Material Expenses ({grnInvoices.length} invoice{grnInvoices.length !== 1 ? 's' : ''})</span>
+                          <Badge className="bg-blue-600 font-mono text-sm">
+                            <IndianRupee className="h-3 w-3 mr-1" />
+                            {getTotalMaterialAmount().toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </Badge>
                         </div>
-                      ))}
+                      </div>
                     </div>
                   )}
                 </CardContent>
@@ -826,16 +1102,30 @@ export default function ExpensesPage() {
                       {manpowerExpenses.map((expense) => (
                         <div key={expense.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
                           <div className="flex-1">
-                            <div className="font-medium text-sm">{expense.manpower_category}</div>
-                            <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
-                              <span>{expense.hours} hrs</span>
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-sm">{expense.manpower_category}</span>
+                              {expense.contractor_name && (
+                                <span className="text-xs text-slate-500">({expense.contractor_name})</span>
+                              )}
+                              {expense.gender && expense.gender !== 'any' && (
+                                <Badge variant="outline" className="text-xs">
+                                  {expense.gender === 'male' ? 'M' : 'F'}
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 mt-1">
+                              <span>{expense.num_persons || 1} person{(expense.num_persons || 1) > 1 ? 's' : ''}</span>
+                              {expense.start_time && expense.end_time && (
+                                <span>({expense.start_time} - {expense.end_time})</span>
+                              )}
+                              <span>{expense.hours.toFixed(1)} hrs</span>
                               <span>@ {expense.rate.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}/hr</span>
                               <Badge variant="secondary" className="font-mono">
                                 <IndianRupee className="h-3 w-3 mr-1" />
                                 {expense.amount.toLocaleString('en-IN')}
                               </Badge>
                             </div>
-                            {expense.notes && <p className="text-xs text-slate-500 mt-1">{expense.notes}</p>}
+                            {expense.notes && <p className="text-xs text-slate-500 mt-1 italic">{expense.notes}</p>}
                           </div>
                           <div className="flex gap-1">
                             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openManpowerDialog(expense)}>
@@ -968,115 +1258,187 @@ export default function ExpensesPage() {
         )}
       </div>
 
-      {/* Material Dialog */}
-      <Dialog open={materialDialogOpen} onOpenChange={setMaterialDialogOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>{editingMaterial ? 'Edit Material Expense' : 'Add Material Expense'}</DialogTitle>
-            <DialogDescription>Enter the invoice amount for material expenses</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label htmlFor="material_amount">Amount (INR) *</Label>
-              <div className="relative">
-                <IndianRupee className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                <Input
-                  id="material_amount"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={materialForm.amount || ''}
-                  onChange={(e) => setMaterialForm({ ...materialForm, amount: parseFloat(e.target.value) || 0 })}
-                  className="pl-10"
-                  placeholder="0.00"
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="invoice_ref">Invoice Reference</Label>
-              <Input
-                id="invoice_ref"
-                value={materialForm.invoice_reference}
-                onChange={(e) => setMaterialForm({ ...materialForm, invoice_reference: e.target.value })}
-                placeholder="e.g., INV-001"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="material_notes">Notes</Label>
-              <Textarea
-                id="material_notes"
-                value={materialForm.notes}
-                onChange={(e) => setMaterialForm({ ...materialForm, notes: e.target.value })}
-                placeholder="Additional details..."
-                rows={2}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setMaterialDialogOpen(false)}>Cancel</Button>
-            <Button onClick={saveMaterialExpense} disabled={saving}>
-              {saving ? 'Saving...' : 'Save'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {/* Manpower Dialog */}
       <Dialog open={manpowerDialogOpen} onOpenChange={setManpowerDialogOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>{editingManpower ? 'Edit Manpower Expense' : 'Add Manpower Expense'}</DialogTitle>
-            <DialogDescription>Select category and enter hours worked</DialogDescription>
+            <DialogDescription>Select manpower details and working hours</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
+            {/* Contractor Selection */}
             <div className="space-y-2">
-              <Label>Manpower Category *</Label>
+              <Label>Contractor *</Label>
               <Select
-                value={manpowerForm.manpower_id}
-                onValueChange={(value) => setManpowerForm({ ...manpowerForm, manpower_id: value })}
+                value={manpowerForm.contractor_id}
+                onValueChange={(value) => setManpowerForm({
+                  ...manpowerForm,
+                  contractor_id: value,
+                  category_id: '',
+                  gender: '',
+                  manpower_id: ''
+                })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select contractor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {contractors.map((contractor) => (
+                    <SelectItem key={contractor.id} value={contractor.id}>
+                      {contractor.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {contractors.length === 0 && (
+                <p className="text-xs text-amber-600">No contractors found. Add contractors first in Master Data.</p>
+              )}
+            </div>
+
+            {/* Category Selection - filtered by contractor */}
+            <div className="space-y-2">
+              <Label>Category *</Label>
+              <Select
+                value={manpowerForm.category_id}
+                onValueChange={(value) => setManpowerForm({
+                  ...manpowerForm,
+                  category_id: value,
+                  gender: '',
+                  manpower_id: ''
+                })}
+                disabled={!manpowerForm.contractor_id}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Select category" />
                 </SelectTrigger>
                 <SelectContent>
-                  {manpowerList.map((mp) => (
-                    <SelectItem key={mp.id} value={mp.id}>
-                      {mp.category} - {mp.hourly_rate.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}/hr
+                  {getCategoriesForContractor(manpowerForm.contractor_id).map((category) => (
+                    <SelectItem key={category.id} value={category.id}>
+                      {category.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {manpowerForm.contractor_id && getCategoriesForContractor(manpowerForm.contractor_id).length === 0 && (
+                <p className="text-xs text-amber-600">No categories with rates for this contractor. Add rates in Master Data.</p>
+              )}
+            </div>
+
+            {/* Gender Selection - filtered by contractor and category */}
+            <div className="space-y-2">
+              <Label>Gender *</Label>
+              <Select
+                value={manpowerForm.gender}
+                onValueChange={(value) => {
+                  const mpEntry = findManpowerEntry(manpowerForm.contractor_id, manpowerForm.category_id, value)
+                  setManpowerForm({
+                    ...manpowerForm,
+                    gender: value,
+                    manpower_id: mpEntry?.id || ''
+                  })
+                }}
+                disabled={!manpowerForm.category_id}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select gender" />
+                </SelectTrigger>
+                <SelectContent>
+                  {getGendersForContractorAndCategory(manpowerForm.contractor_id, manpowerForm.category_id).map(({ gender, label }) => (
+                    <SelectItem key={gender} value={gender}>
+                      {label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Show selected manpower rate info */}
+            {manpowerForm.manpower_id && (() => {
+              const mp = manpowerList.find(m => m.id === manpowerForm.manpower_id)
+              if (!mp) return null
+              const hourlyRate = mp.rate / (mp.daily_hours || 8)
+              return (
+                <div className="p-2 bg-slate-100 rounded text-xs text-slate-600">
+                  Daily Rate: {mp.rate.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })} for {mp.daily_hours} hrs
+                  (Hourly: {hourlyRate.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}/hr)
+                </div>
+              )
+            })()}
+
+            {/* Number of Persons */}
             <div className="space-y-2">
-              <Label htmlFor="manpower_hours">Hours Worked *</Label>
+              <Label htmlFor="num_persons">Number of Persons *</Label>
               <Input
-                id="manpower_hours"
+                id="num_persons"
                 type="number"
-                step="0.5"
-                min="0"
-                value={manpowerForm.hours || ''}
-                onChange={(e) => setManpowerForm({ ...manpowerForm, hours: parseFloat(e.target.value) || 0 })}
-                placeholder="0"
+                min="1"
+                value={manpowerForm.num_persons || ''}
+                onChange={(e) => setManpowerForm({ ...manpowerForm, num_persons: parseInt(e.target.value) || 1 })}
+                placeholder="1"
               />
             </div>
-            {manpowerForm.manpower_id && manpowerForm.hours > 0 && (
-              <div className="p-3 bg-green-50 rounded-lg border border-green-200">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-green-700">Calculated Amount:</span>
-                  <span className="font-bold text-green-800">
-                    {(manpowerForm.hours * getManpowerRate(manpowerForm.manpower_id)).toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}
-                  </span>
-                </div>
+
+            {/* Start and End Time */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="start_time">Start Time *</Label>
+                <Input
+                  id="start_time"
+                  type="time"
+                  value={manpowerForm.start_time}
+                  onChange={(e) => setManpowerForm({ ...manpowerForm, start_time: e.target.value })}
+                />
               </div>
-            )}
+              <div className="space-y-2">
+                <Label htmlFor="end_time">End Time *</Label>
+                <Input
+                  id="end_time"
+                  type="time"
+                  value={manpowerForm.end_time}
+                  onChange={(e) => setManpowerForm({ ...manpowerForm, end_time: e.target.value })}
+                />
+              </div>
+            </div>
+
+            {/* Calculated Amount Display */}
+            {manpowerForm.manpower_id && manpowerForm.start_time && manpowerForm.end_time && (() => {
+              const mp = manpowerList.find(m => m.id === manpowerForm.manpower_id)
+              if (!mp) return null
+              const hours = calculateHours(manpowerForm.start_time, manpowerForm.end_time)
+              const hourlyRate = mp.rate / (mp.daily_hours || 8)
+              const totalAmount = hourlyRate * hours * manpowerForm.num_persons
+              if (hours <= 0) return null
+              return (
+                <div className="p-3 bg-green-50 rounded-lg border border-green-200">
+                  <div className="space-y-1 text-sm">
+                    <div className="flex justify-between text-slate-600">
+                      <span>Total Hours:</span>
+                      <span>{hours.toFixed(1)} hrs</span>
+                    </div>
+                    <div className="flex justify-between text-slate-600">
+                      <span>Calculation:</span>
+                      <span>{hourlyRate.toFixed(2)}/hr × {hours.toFixed(1)} hrs × {manpowerForm.num_persons} persons</span>
+                    </div>
+                    <div className="flex justify-between text-green-700 font-medium pt-1 border-t border-green-200">
+                      <span>Total Amount:</span>
+                      <span className="font-bold">
+                        {totalAmount.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Notes/Remarks */}
             <div className="space-y-2">
-              <Label htmlFor="manpower_notes">Notes</Label>
+              <Label htmlFor="manpower_notes">Remarks / Worker Names</Label>
               <Textarea
                 id="manpower_notes"
                 value={manpowerForm.notes}
                 onChange={(e) => setManpowerForm({ ...manpowerForm, notes: e.target.value })}
-                placeholder="Additional details..."
-                rows={2}
+                placeholder="List names of workers or additional notes..."
+                rows={3}
               />
             </div>
           </div>
