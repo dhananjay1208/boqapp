@@ -31,7 +31,13 @@ app/
 │   │   ├── supplier-invoices/  # Supplier invoice payments
 │   │   ├── checklists/         # Checklist management
 │   │   ├── reports/            # Reports
-│   │   └── master-data/        # Master data (suppliers, materials, etc.)
+│   │   └── master-data/        # Master data
+│   │       ├── materials/      # Material master list
+│   │       ├── equipment/      # Equipment master
+│   │       ├── suppliers/      # Supplier master
+│   │       ├── labour-contractors/   # Labour contractors
+│   │       ├── manpower-categories/  # Manpower categories
+│   │       └── manpower/       # Manpower rates
 │   ├── components/
 │   │   ├── layout/             # Sidebar, Mobile Nav, Header
 │   │   └── ui/                 # Shadcn UI components
@@ -70,12 +76,27 @@ app/
 - Track received vs consumed quantities
 - Category-wise grouping
 
-### 5. Expenses (`/expenses`, `/expense-dashboard`)
-- Record expenses by category (Material, Manpower, Equipment, Other)
-- Dashboard with charts and analytics
-- Date range filtering
+### 5. Expenses Recording (`/expenses`)
+- **Material Tab**: Auto-fetched from Material GRN module by date (read-only)
+  - Shows invoice numbers, suppliers, line items with amounts
+  - Displays GST breakdown and totals
+- **Manpower Tab**: Record manpower expenses with:
+  - Cascading dropdowns: Contractor → Category → Gender
+  - Number of persons, start time, end time
+  - Auto-calculated hours and amount (hourly rate × hours × persons)
+  - Remarks field for worker names
+- **Equipment Tab**: Equipment usage with hours and auto-calculated amount
+- **Other Tab**: Miscellaneous expenses
+- **Export to Excel**: Daily expense report with all categories
+  - Summary sheet with totals
+  - Detailed sheets for each category
 
-### 6. Supplier Invoices (`/supplier-invoices`)
+### 6. Expense Dashboard (`/expense-dashboard`)
+- Charts and analytics for expenses
+- Date range filtering
+- Category-wise breakdown
+
+### 7. Supplier Invoices (`/supplier-invoices`)
 - Consolidated view of supplier invoices from GRN
 - Payment tracking with status (Pending, Partial, Paid)
 - Features:
@@ -86,15 +107,22 @@ app/
   - Partial payment support with balance tracking
   - Export to Excel with all payment details
 
-### 7. Checklists (`/checklists`)
+### 8. Checklists (`/checklists`)
 - Activity checklists per BOQ headline
 - Status tracking (pending, in_progress, completed)
 
-### 8. Master Data (`/master-data/*`)
-- **Materials**: Category, name, unit, HSN code
-- **Suppliers**: Name, GSTIN, address, contact
-- **Equipment**: Equipment list for expenses
-- **Manpower**: Manpower categories for expenses
+### 9. Master Data (`/master-data/*`)
+- **Materials** (`/master-data/materials`): Category, name, unit, HSN code
+- **Suppliers** (`/master-data/suppliers`): Name, GSTIN, address, contact
+- **Equipment** (`/master-data/equipment`): Equipment name, hourly rate
+- **Labour Contractors** (`/master-data/labour-contractors`):
+  - Contractor name, contact person, contact number, address
+- **Manpower Categories** (`/master-data/manpower-categories`):
+  - Category name (Mason, Helper, Carpenter, etc.), description
+- **Manpower Rates** (`/master-data/manpower`):
+  - Links contractor + category + gender
+  - Daily rate, daily hours
+  - Auto-calculated hourly rate displayed
 
 ## Database Tables
 
@@ -106,7 +134,7 @@ app/
 - `materials` - Materials per line item
 
 ### GRN Tables (Invoice-based)
-- `grn_invoices` - GRN invoice headers
+- `grn_invoices` - GRN invoice headers (site_id, supplier_id, invoice_number, grn_date)
 - `grn_line_items` - Materials per invoice (with GST calculation)
 - `grn_invoice_dc` - Delivery challan documents
 - `grn_line_item_documents` - MIR, Test Cert, TDS per material
@@ -114,12 +142,22 @@ app/
 ### Master Data Tables
 - `master_materials` - Material master list
 - `suppliers` - Supplier master list
-- `master_equipment` - Equipment master
-- `master_manpower` - Manpower categories
+- `master_equipment` - Equipment master (name, hourly_rate)
+- `master_labour_contractors` - Labour contractors (name, contact_person, contact_number, address)
+- `master_manpower_categories` - Manpower categories (name, description)
+- `master_manpower` - Manpower rates
+  - contractor_id (FK to master_labour_contractors)
+  - category_id (FK to master_manpower_categories)
+  - gender (male, female, any)
+  - rate (daily rate)
+  - daily_hours
 
 ### Expense Tables
-- `expense_material` - Material expenses
 - `expense_manpower` - Manpower expenses
+  - contractor_name, manpower_category, gender
+  - num_persons, start_time, end_time
+  - hours, rate (hourly), amount
+  - notes (for worker names)
 - `expense_equipment` - Equipment expenses
 - `expense_other` - Other expenses
 
@@ -186,6 +224,27 @@ const { data, error } = await supabase
   .eq('site_id', selectedSiteId)
 ```
 
+### Cascading Lookups (Manpower Example)
+```typescript
+// Fetch with joins
+const { data } = await supabase
+  .from('master_manpower')
+  .select(`
+    *,
+    labour_contractor:master_labour_contractors(id, name),
+    manpower_category:master_manpower_categories(id, name)
+  `)
+  .eq('is_active', true)
+
+// Filter categories by contractor
+function getCategoriesForContractor(contractorId: string) {
+  const categoryIds = manpowerList
+    .filter(m => m.contractor_id === contractorId)
+    .map(m => m.category_id)
+  return manpowerCategories.filter(c => categoryIds.includes(c.id))
+}
+```
+
 ### File Upload to Storage
 ```typescript
 const { error } = await supabase.storage
@@ -193,7 +252,7 @@ const { error } = await supabase.storage
   .upload(filePath, file)
 ```
 
-### View Uploaded File
+### View Uploaded File (Signed URL for private bucket)
 ```typescript
 const { data } = await supabase.storage
   .from('compliance-docs')
@@ -201,10 +260,30 @@ const { data } = await supabase.storage
 window.open(data.signedUrl, '_blank')
 ```
 
+### Excel Export
+```typescript
+import * as XLSX from 'xlsx'
+
+function exportToExcel() {
+  const wb = XLSX.utils.book_new()
+
+  // Create sheet from array of arrays
+  const data = [['Header1', 'Header2'], ['Row1Col1', 'Row1Col2']]
+  const ws = XLSX.utils.aoa_to_sheet(data)
+  ws['!cols'] = [{ wch: 20 }, { wch: 15 }] // Column widths
+
+  XLSX.utils.book_append_sheet(wb, ws, 'SheetName')
+  XLSX.writeFile(wb, 'filename.xlsx')
+}
+```
+
 ## Navigation
 Navigation items are defined in:
 - `src/components/layout/sidebar.tsx` - Desktop sidebar
 - `src/components/layout/mobile-nav.tsx` - Mobile navigation
+
+Master Data submenu items:
+- Material List, Equipment, Labour Contractors, Manpower Categories, Manpower Rates, Suppliers
 
 To add a new page:
 1. Create page in `src/app/[page-name]/page.tsx`
@@ -219,6 +298,14 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=xxx
 
 ## Running Migrations
 Migrations are in `supabase/migrations/`. Run them in Supabase SQL Editor in order.
+
+Key migrations:
+- `011_expenses.sql` - Base expense tables
+- `014_grn_restructure.sql` - Invoice-based GRN structure
+- `015_supplier_invoice_payments.sql` - Payment tracking
+- `017_manpower_master_update.sql` - Manpower fields (rate, daily_hours, gender)
+- `018_expense_manpower_update.sql` - Manpower expense time tracking fields
+- `019_labour_contractors_and_categories.sql` - Labour contractors and categories tables
 
 ## Development
 ```bash
