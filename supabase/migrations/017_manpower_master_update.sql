@@ -1,5 +1,5 @@
 -- Migration: Update Manpower Master with new fields
--- Adds contractor_name, gender fields and renames hourly_rate to rate
+-- Adds contractor_name, gender, daily_hours fields and renames hourly_rate to rate
 
 -- Add new columns
 ALTER TABLE master_manpower
@@ -7,6 +7,9 @@ ADD COLUMN IF NOT EXISTS contractor_name TEXT;
 
 ALTER TABLE master_manpower
 ADD COLUMN IF NOT EXISTS gender TEXT DEFAULT 'any' CHECK (gender IN ('male', 'female', 'any'));
+
+ALTER TABLE master_manpower
+ADD COLUMN IF NOT EXISTS daily_hours DECIMAL(4,2) DEFAULT 8;
 
 -- Rename hourly_rate to rate (if it exists)
 DO $$

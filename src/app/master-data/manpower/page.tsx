@@ -50,6 +50,7 @@ interface Manpower {
   description: string | null
   gender: 'male' | 'female' | 'any'
   rate: number
+  daily_hours: number
   is_active: boolean
   created_at: string
 }
@@ -75,6 +76,7 @@ export default function ManpowerMasterPage() {
     description: '',
     gender: 'any' as 'male' | 'female' | 'any',
     rate: 0,
+    daily_hours: 8,
   })
 
   // Get unique contractors for filter
@@ -134,6 +136,7 @@ export default function ManpowerMasterPage() {
       description: '',
       gender: 'any',
       rate: 0,
+      daily_hours: 8,
     })
     setDialogOpen(true)
   }
@@ -146,6 +149,7 @@ export default function ManpowerMasterPage() {
       description: item.description || '',
       gender: item.gender || 'any',
       rate: item.rate,
+      daily_hours: item.daily_hours || 8,
     })
     setDialogOpen(true)
   }
@@ -168,6 +172,7 @@ export default function ManpowerMasterPage() {
         description: formData.description.trim() || null,
         gender: formData.gender,
         rate: formData.rate,
+        daily_hours: formData.daily_hours,
       }
 
       if (editingManpower) {
@@ -343,7 +348,8 @@ export default function ManpowerMasterPage() {
                       <TableHead>Category</TableHead>
                       <TableHead>Description</TableHead>
                       <TableHead className="text-center">Gender</TableHead>
-                      <TableHead className="text-right">Rate</TableHead>
+                      <TableHead className="text-right">Daily Rate</TableHead>
+                      <TableHead className="text-center">Daily Hours</TableHead>
                       <TableHead className="w-[100px] text-right">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -376,6 +382,9 @@ export default function ManpowerMasterPage() {
                             <IndianRupee className="h-3 w-3 mr-1" />
                             {item.rate.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                           </Badge>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <span className="text-sm text-slate-600">{item.daily_hours || 8} hrs</span>
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-1">
@@ -474,24 +483,44 @@ export default function ManpowerMasterPage() {
               <p className="text-xs text-slate-500">Specify if this category is gender-specific</p>
             </div>
 
-            {/* Rate */}
-            <div className="space-y-2">
-              <Label htmlFor="rate">Rate (INR) *</Label>
-              <div className="relative">
-                <IndianRupee className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+            {/* Daily Rate and Hours */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="rate">Daily Rate (INR) *</Label>
+                <div className="relative">
+                  <IndianRupee className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <Input
+                    id="rate"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="0.00"
+                    value={formData.rate || ''}
+                    onChange={(e) => setFormData({ ...formData, rate: parseFloat(e.target.value) || 0 })}
+                    className="pl-10"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="daily_hours">Daily Hours *</Label>
                 <Input
-                  id="rate"
+                  id="daily_hours"
                   type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  value={formData.rate || ''}
-                  onChange={(e) => setFormData({ ...formData, rate: parseFloat(e.target.value) || 0 })}
-                  className="pl-10"
+                  step="0.5"
+                  min="1"
+                  max="24"
+                  placeholder="8"
+                  value={formData.daily_hours || ''}
+                  onChange={(e) => setFormData({ ...formData, daily_hours: parseFloat(e.target.value) || 8 })}
                 />
               </div>
-              <p className="text-xs text-slate-500">Daily or per-unit rate for this manpower category</p>
             </div>
+            <p className="text-xs text-slate-500">
+              Daily rate of ₹{formData.rate.toLocaleString('en-IN')} for {formData.daily_hours} hours
+              {formData.rate > 0 && formData.daily_hours > 0 && (
+                <> (₹{(formData.rate / formData.daily_hours).toFixed(2)}/hr)</>
+              )}
+            </p>
           </div>
 
           <DialogFooter>
