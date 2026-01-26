@@ -297,7 +297,12 @@ export default function ExpensesPage() {
           .order('created_at'),
       ])
 
-      setGrnInvoices(grnRes.data || [])
+      // Transform supplier from array to single object (Supabase returns array for joins)
+      const transformedGrnData = (grnRes.data || []).map((invoice: any) => ({
+        ...invoice,
+        supplier: Array.isArray(invoice.supplier) ? invoice.supplier[0] : invoice.supplier
+      }))
+      setGrnInvoices(transformedGrnData)
       setManpowerExpenses(manpowerRes.data || [])
       setEquipmentExpenses(equipmentRes.data || [])
       setOtherExpenses(otherRes.data || [])

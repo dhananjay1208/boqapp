@@ -31,6 +31,7 @@ import {
   CreditCard,
   HardHat,
   Tag,
+  Wrench,
 } from 'lucide-react'
 
 const navigation = [
@@ -38,6 +39,7 @@ const navigation = [
   { name: 'Sites', href: '/sites', icon: Building2 },
   { name: 'BOQ Management', href: '/boq', icon: FileSpreadsheet },
   { name: 'BOQ Progress', href: '/boq-progress', icon: TrendingUp },
+  { name: 'Workstations', href: '/workstations', icon: Wrench },
   { name: 'Material GRN', href: '/material-grn', icon: Receipt },
   { name: 'Inventory', href: '/inventory', icon: Warehouse },
   { name: 'Expenses Recording', href: '/expenses', icon: Wallet },
@@ -48,6 +50,7 @@ const navigation = [
 ]
 
 const masterDataItems = [
+  { name: 'Workstations', href: '/master-data/workstations', icon: Wrench },
   { name: 'Material List', href: '/master-data/materials', icon: ListTree },
   { name: 'Equipment', href: '/master-data/equipment', icon: Truck },
   { name: 'Labour Contractors', href: '/master-data/labour-contractors', icon: HardHat },
