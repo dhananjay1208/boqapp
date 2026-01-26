@@ -8,6 +8,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -31,15 +38,18 @@ import {
   Search,
   Loader2,
   IndianRupee,
+  Building2,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 
 interface Manpower {
   id: string
+  contractor_name: string | null
   category: string
   description: string | null
-  hourly_rate: number
+  gender: 'male' | 'female' | 'any'
+  rate: number
   is_active: boolean
   created_at: string
 }
@@ -51,6 +61,7 @@ export default function ManpowerMasterPage() {
 
   // Filters
   const [searchTerm, setSearchTerm] = useState('')
+  const [filterContractor, setFilterContractor] = useState<string>('all')
 
   // Dialog states
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -59,10 +70,15 @@ export default function ManpowerMasterPage() {
 
   // Form state
   const [formData, setFormData] = useState({
+    contractor_name: '',
     category: '',
     description: '',
-    hourly_rate: 0,
+    gender: 'any' as 'male' | 'female' | 'any',
+    rate: 0,
   })
+
+  // Get unique contractors for filter
+  const contractors = [...new Set(manpower.map(m => m.contractor_name).filter(Boolean))] as string[]
 
   useEffect(() => {
     fetchManpower()
@@ -70,7 +86,7 @@ export default function ManpowerMasterPage() {
 
   useEffect(() => {
     filterManpower()
-  }, [manpower, searchTerm])
+  }, [manpower, searchTerm, filterContractor])
 
   async function fetchManpower() {
     try {
@@ -78,6 +94,7 @@ export default function ManpowerMasterPage() {
         .from('master_manpower')
         .select('*')
         .eq('is_active', true)
+        .order('contractor_name', { nullsFirst: false })
         .order('category')
 
       if (error) throw error
@@ -97,8 +114,13 @@ export default function ManpowerMasterPage() {
       const term = searchTerm.toLowerCase()
       filtered = filtered.filter(m =>
         m.category.toLowerCase().includes(term) ||
-        m.description?.toLowerCase().includes(term)
+        m.description?.toLowerCase().includes(term) ||
+        m.contractor_name?.toLowerCase().includes(term)
       )
+    }
+
+    if (filterContractor && filterContractor !== 'all') {
+      filtered = filtered.filter(m => m.contractor_name === filterContractor)
     }
 
     setFilteredManpower(filtered)
@@ -107,9 +129,11 @@ export default function ManpowerMasterPage() {
   function openCreateDialog() {
     setEditingManpower(null)
     setFormData({
+      contractor_name: '',
       category: '',
       description: '',
-      hourly_rate: 0,
+      gender: 'any',
+      rate: 0,
     })
     setDialogOpen(true)
   }
@@ -117,9 +141,11 @@ export default function ManpowerMasterPage() {
   function openEditDialog(item: Manpower) {
     setEditingManpower(item)
     setFormData({
+      contractor_name: item.contractor_name || '',
       category: item.category,
       description: item.description || '',
-      hourly_rate: item.hourly_rate,
+      gender: item.gender || 'any',
+      rate: item.rate,
     })
     setDialogOpen(true)
   }
@@ -129,21 +155,25 @@ export default function ManpowerMasterPage() {
       toast.error('Please enter manpower category')
       return
     }
-    if (formData.hourly_rate < 0) {
-      toast.error('Hourly rate cannot be negative')
+    if (formData.rate < 0) {
+      toast.error('Rate cannot be negative')
       return
     }
 
     setSaving(true)
     try {
+      const saveData = {
+        contractor_name: formData.contractor_name.trim() || null,
+        category: formData.category.trim(),
+        description: formData.description.trim() || null,
+        gender: formData.gender,
+        rate: formData.rate,
+      }
+
       if (editingManpower) {
         const { error } = await supabase
           .from('master_manpower')
-          .update({
-            category: formData.category.trim(),
-            description: formData.description.trim() || null,
-            hourly_rate: formData.hourly_rate,
-          })
+          .update(saveData)
           .eq('id', editingManpower.id)
 
         if (error) throw error
@@ -151,11 +181,7 @@ export default function ManpowerMasterPage() {
       } else {
         const { error } = await supabase
           .from('master_manpower')
-          .insert({
-            category: formData.category.trim(),
-            description: formData.description.trim() || null,
-            hourly_rate: formData.hourly_rate,
-          })
+          .insert(saveData)
 
         if (error) throw error
         toast.success('Manpower category created successfully')
@@ -189,6 +215,22 @@ export default function ManpowerMasterPage() {
     }
   }
 
+  function getGenderLabel(gender: string) {
+    switch (gender) {
+      case 'male': return 'Male'
+      case 'female': return 'Female'
+      default: return 'Any'
+    }
+  }
+
+  function getGenderBadgeColor(gender: string) {
+    switch (gender) {
+      case 'male': return 'bg-blue-100 text-blue-700'
+      case 'female': return 'bg-pink-100 text-pink-700'
+      default: return 'bg-slate-100 text-slate-700'
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex flex-col min-h-screen">
@@ -218,7 +260,7 @@ export default function ManpowerMasterPage() {
                   Manpower Master
                 </CardTitle>
                 <CardDescription>
-                  Manage manpower categories and their hourly rates
+                  Manage manpower categories, contractors, and rates
                 </CardDescription>
               </div>
               <Button onClick={openCreateDialog}>
@@ -228,24 +270,43 @@ export default function ManpowerMasterPage() {
             </div>
           </CardHeader>
           <CardContent>
-            {/* Search */}
+            {/* Filters */}
             <div className="flex flex-col sm:flex-row gap-4">
               <div className="flex-1">
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
                   <Input
-                    placeholder="Search manpower categories..."
+                    placeholder="Search by category, description, or contractor..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                     className="pl-10"
                   />
                 </div>
               </div>
+              {contractors.length > 0 && (
+                <Select value={filterContractor} onValueChange={setFilterContractor}>
+                  <SelectTrigger className="w-full sm:w-[200px]">
+                    <Building2 className="h-4 w-4 mr-2" />
+                    <SelectValue placeholder="All Contractors" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Contractors</SelectItem>
+                    {contractors.map((contractor) => (
+                      <SelectItem key={contractor} value={contractor}>
+                        {contractor}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
             </div>
 
             {/* Stats */}
             <div className="flex gap-4 mt-4 text-sm text-slate-600">
               <span>{filteredManpower.length} manpower categories</span>
+              {contractors.length > 0 && (
+                <span>• {contractors.length} contractors</span>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -258,11 +319,11 @@ export default function ManpowerMasterPage() {
                 <Users className="h-12 w-12 mx-auto text-slate-300 mb-4" />
                 <h3 className="text-lg font-medium text-slate-900 mb-2">No Manpower Categories Found</h3>
                 <p className="text-slate-500 mb-4">
-                  {searchTerm
-                    ? 'Try adjusting your search'
+                  {searchTerm || filterContractor !== 'all'
+                    ? 'Try adjusting your search or filter'
                     : 'Add your first manpower category to get started'}
                 </p>
-                {!searchTerm && (
+                {!searchTerm && filterContractor === 'all' && (
                   <Button onClick={openCreateDialog}>
                     <Plus className="h-4 w-4 mr-2" />
                     Add Manpower
@@ -274,53 +335,72 @@ export default function ManpowerMasterPage() {
         ) : (
           <Card>
             <CardContent className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Description</TableHead>
-                    <TableHead className="w-[150px] text-right">Hourly Rate</TableHead>
-                    <TableHead className="w-[100px] text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredManpower.map((item) => (
-                    <TableRow key={item.id}>
-                      <TableCell>
-                        <p className="font-medium">{item.category}</p>
-                      </TableCell>
-                      <TableCell>
-                        <p className="text-sm text-slate-500">{item.description || '-'}</p>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Badge variant="secondary" className="font-mono">
-                          <IndianRupee className="h-3 w-3 mr-1" />
-                          {item.hourly_rate.toLocaleString('en-IN', { minimumFractionDigits: 2 })}/hr
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openEditDialog(item)}
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleDelete(item)}
-                            className="text-red-600"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Contractor</TableHead>
+                      <TableHead>Category</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead className="text-center">Gender</TableHead>
+                      <TableHead className="text-right">Rate</TableHead>
+                      <TableHead className="w-[100px] text-right">Actions</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredManpower.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell>
+                          {item.contractor_name ? (
+                            <div className="flex items-center gap-2">
+                              <Building2 className="h-4 w-4 text-slate-400" />
+                              <span className="font-medium">{item.contractor_name}</span>
+                            </div>
+                          ) : (
+                            <span className="text-slate-400">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <p className="font-medium">{item.category}</p>
+                        </TableCell>
+                        <TableCell>
+                          <p className="text-sm text-slate-500">{item.description || '-'}</p>
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <Badge className={getGenderBadgeColor(item.gender)}>
+                            {getGenderLabel(item.gender)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Badge variant="secondary" className="font-mono">
+                            <IndianRupee className="h-3 w-3 mr-1" />
+                            {item.rate.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openEditDialog(item)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDelete(item)}
+                              className="text-red-600"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -341,12 +421,24 @@ export default function ManpowerMasterPage() {
           </DialogHeader>
 
           <div className="space-y-4 py-4">
+            {/* Contractor Name */}
+            <div className="space-y-2">
+              <Label htmlFor="contractor_name">Contractor Name</Label>
+              <Input
+                id="contractor_name"
+                placeholder="e.g., ABC Contractors, XYZ Labor Supply"
+                value={formData.contractor_name}
+                onChange={(e) => setFormData({ ...formData, contractor_name: e.target.value })}
+              />
+              <p className="text-xs text-slate-500">Leave empty if not specific to a contractor</p>
+            </div>
+
             {/* Category Name */}
             <div className="space-y-2">
               <Label htmlFor="category">Category *</Label>
               <Input
                 id="category"
-                placeholder="e.g., Worker, Supervisor, Mason"
+                placeholder="e.g., Mason, Helper, Carpenter, Welder"
                 value={formData.category}
                 onChange={(e) => setFormData({ ...formData, category: e.target.value })}
               />
@@ -357,29 +449,48 @@ export default function ManpowerMasterPage() {
               <Label htmlFor="description">Description</Label>
               <Input
                 id="description"
-                placeholder="e.g., General Construction Worker, Site Supervisor"
+                placeholder="e.g., Skilled brick mason, General helper"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
               />
             </div>
 
-            {/* Hourly Rate */}
+            {/* Gender */}
             <div className="space-y-2">
-              <Label htmlFor="hourly_rate">Hourly Rate (INR) *</Label>
+              <Label htmlFor="gender">Category Gender</Label>
+              <Select
+                value={formData.gender}
+                onValueChange={(value: 'male' | 'female' | 'any') => setFormData({ ...formData, gender: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select gender" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="any">Any</SelectItem>
+                  <SelectItem value="male">Male</SelectItem>
+                  <SelectItem value="female">Female</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-slate-500">Specify if this category is gender-specific</p>
+            </div>
+
+            {/* Rate */}
+            <div className="space-y-2">
+              <Label htmlFor="rate">Rate (INR) *</Label>
               <div className="relative">
                 <IndianRupee className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-slate-400" />
                 <Input
-                  id="hourly_rate"
+                  id="rate"
                   type="number"
                   step="0.01"
                   min="0"
                   placeholder="0.00"
-                  value={formData.hourly_rate || ''}
-                  onChange={(e) => setFormData({ ...formData, hourly_rate: parseFloat(e.target.value) || 0 })}
+                  value={formData.rate || ''}
+                  onChange={(e) => setFormData({ ...formData, rate: parseFloat(e.target.value) || 0 })}
                   className="pl-10"
                 />
               </div>
-              <p className="text-xs text-slate-500">Rate per hour for this manpower category</p>
+              <p className="text-xs text-slate-500">Daily or per-unit rate for this manpower category</p>
             </div>
           </div>
 
