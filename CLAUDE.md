@@ -65,6 +65,10 @@ app/
 - Bill of Quantities with packages, headlines, line items
 - Import from Excel
 - Track materials per line item
+- **Consumption History** (read-only):
+  - Displays material consumption recorded from Workstations module
+  - Shows material name, quantity, workstation name, date
+  - No direct recording - consumption is managed via Workstations module
 
 ### 3. Material GRN (`/material-grn`)
 - Invoice-based goods receipt notes
@@ -115,6 +119,7 @@ app/
 
 ### 9. Workstation Management (`/workstations`)
 - Track work progress at physical workstations (HT ROOM, ELE ROOM, FENCING, etc.)
+- **Primary source for material consumption** - consumption recorded here appears in BOQ Management
 - Features:
   - Site selector dropdown
   - Assign workstations to sites from master list
@@ -129,8 +134,8 @@ app/
     - Date picker
     - Cascading dropdowns: Headline → Line Item
     - Context display (unit, previous qty, BOQ qty)
-    - Quantity input
-    - Material consumption tracking (optional, dynamic rows)
+    - Quantity input (optional - can record material-only entries)
+    - Material consumption tracking with searchable dropdown
 - Master Data (`/master-data/workstations`):
   - 29 predefined workstations seeded
   - Add/Edit/Delete workstation types
@@ -201,6 +206,16 @@ app/
   - site_workstation_id, boq_line_item_id, entry_date, quantity, notes
 - `workstation_material_consumption` - Material usage per progress entry
   - workstation_boq_progress_id, material_id, material_name, quantity, unit
+  - **Source of truth for BOQ line item consumption history**
+
+### Data Flow: Workstation → BOQ Consumption
+```
+Workstations Module (/workstations)
+    ↓ Records progress + material consumption
+workstation_material_consumption table
+    ↓ Joined with workstation_boq_progress → site_workstations → master_workstations
+BOQ Management (/boq/[id]) reads consumption history (read-only)
+```
 
 ## Supabase Storage Buckets
 - `compliance-docs` - GRN documents (DC, MIR, Test Cert, TDS)
