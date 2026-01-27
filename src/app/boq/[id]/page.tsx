@@ -52,10 +52,10 @@ import {
   Building2,
   ClipboardCheck,
   FileText,
-  Flame,
   ChevronDown,
   ChevronRight,
   Calendar,
+  Wrench,
 } from 'lucide-react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
@@ -116,24 +116,15 @@ interface ChecklistWithItems extends Checklist {
   items: ChecklistItem[]
 }
 
-interface Consumption {
+interface WorkstationConsumption {
   id: string
   line_item_id: string
-  site_id: string
-  material_id: string
   material_name: string
-  consumption_date: string
   quantity: number
   unit: string
+  entry_date: string
+  workstation_name: string
   notes: string | null
-  created_at: string
-}
-
-interface AvailableInventoryItem {
-  material_id: string
-  material_name: string
-  unit: string
-  available_quantity: number
 }
 
 
@@ -152,13 +143,6 @@ const emptyChecklist = {
 
 const emptyChecklistItem = {
   activity_name: '',
-  notes: '',
-}
-
-const emptyConsumption = {
-  consumption_date: new Date().toISOString().split('T')[0],
-  material_id: '',
-  quantity: 0,
   notes: '',
 }
 
@@ -213,13 +197,8 @@ export default function BOQDetailPage() {
   const [selectedChecklistId, setSelectedChecklistId] = useState<string>('')
 
   // Consumption State
-  const [consumptionDialogOpen, setConsumptionDialogOpen] = useState(false)
-  const [selectedLineItemForConsumption, setSelectedLineItemForConsumption] = useState<BOQLineItem | null>(null)
-  const [consumptionFormData, setConsumptionFormData] = useState(emptyConsumption)
-  const [availableInventory, setAvailableInventory] = useState<AvailableInventoryItem[]>([])
-  const [consumptions, setConsumptions] = useState<Consumption[]>([])
-  const [editingConsumption, setEditingConsumption] = useState<Consumption | null>(null)
-  const [loadingInventory, setLoadingInventory] = useState(false)
+  // Workstation Consumption (read-only from workstation module)
+  const [workstationConsumptions, setWorkstationConsumptions] = useState<WorkstationConsumption[]>([])
   const [expandedConsumptions, setExpandedConsumptions] = useState<Set<string>>(new Set())
 
   const [saving, setSaving] = useState(false)
@@ -284,19 +263,53 @@ export default function BOQDetailPage() {
         setChecklists([])
       }
 
-      // Fetch consumptions for all line items in this headline
+      // Fetch workstation consumptions for all line items in this headline
       if (lineItemsData && lineItemsData.length > 0) {
         const lineItemIds = lineItemsData.map(li => li.id)
-        const { data: consumptionsData, error: consumptionsError } = await supabase
-          .from('material_consumption')
-          .select('*')
-          .in('line_item_id', lineItemIds)
-          .order('consumption_date', { ascending: false })
 
-        if (consumptionsError) {
-          console.error('Error fetching consumptions:', consumptionsError)
+        // Fetch from workstation_material_consumption with joins
+        const { data: wsConsumptionsData, error: wsConsumptionsError } = await supabase
+          .from('workstation_material_consumption')
+          .select(`
+            id,
+            material_name,
+            quantity,
+            unit,
+            notes,
+            workstation_boq_progress!inner (
+              boq_line_item_id,
+              entry_date,
+              site_workstation:site_workstations!inner (
+                workstation:master_workstations (
+                  name
+                )
+              )
+            )
+          `)
+
+        if (wsConsumptionsError) {
+          console.error('Error fetching workstation consumptions:', wsConsumptionsError)
         } else {
-          setConsumptions(consumptionsData || [])
+          // Transform the data and filter by line item IDs
+          const transformedConsumptions: WorkstationConsumption[] = (wsConsumptionsData || [])
+            .filter((wc: any) => lineItemIds.includes(wc.workstation_boq_progress?.boq_line_item_id))
+            .map((wc: any) => ({
+              id: wc.id,
+              line_item_id: wc.workstation_boq_progress?.boq_line_item_id,
+              material_name: wc.material_name,
+              quantity: wc.quantity,
+              unit: wc.unit,
+              entry_date: wc.workstation_boq_progress?.entry_date,
+              workstation_name: Array.isArray(wc.workstation_boq_progress?.site_workstation?.workstation)
+                ? wc.workstation_boq_progress?.site_workstation?.workstation[0]?.name
+                : wc.workstation_boq_progress?.site_workstation?.workstation?.name || 'Unknown',
+              notes: wc.notes
+            }))
+            .sort((a: WorkstationConsumption, b: WorkstationConsumption) =>
+              new Date(b.entry_date).getTime() - new Date(a.entry_date).getTime()
+            )
+
+          setWorkstationConsumptions(transformedConsumptions)
         }
       }
     } catch (error) {
@@ -614,204 +627,7 @@ export default function BOQDetailPage() {
     }
   }
 
-  // Consumption functions
-  async function fetchAvailableInventory(siteId: string) {
-    setLoadingInventory(true)
-    try {
-      // Fetch all GRN entries for the site
-      const { data: grnData, error: grnError } = await supabase
-        .from('material_grn')
-        .select('material_id, material_name, quantity, unit')
-        .eq('site_id', siteId)
-
-      if (grnError) throw grnError
-
-      // Fetch all consumption entries for the site
-      const { data: consumptionData, error: consumptionError } = await supabase
-        .from('material_consumption')
-        .select('material_id, quantity')
-        .eq('site_id', siteId)
-
-      if (consumptionError) throw consumptionError
-
-      // Aggregate GRN quantities
-      const grnTotals: { [key: string]: { material_name: string; unit: string; quantity: number } } = {}
-      ;(grnData || []).forEach(grn => {
-        if (!grnTotals[grn.material_id]) {
-          grnTotals[grn.material_id] = {
-            material_name: grn.material_name,
-            unit: grn.unit,
-            quantity: 0
-          }
-        }
-        grnTotals[grn.material_id].quantity += parseFloat(grn.quantity) || 0
-      })
-
-      // Aggregate consumption quantities
-      const consumptionTotals: { [key: string]: number } = {}
-      ;(consumptionData || []).forEach(c => {
-        consumptionTotals[c.material_id] = (consumptionTotals[c.material_id] || 0) + (parseFloat(c.quantity) || 0)
-      })
-
-      // Calculate available inventory
-      const available: AvailableInventoryItem[] = []
-      Object.keys(grnTotals).forEach(materialId => {
-        const received = grnTotals[materialId].quantity
-        const consumed = consumptionTotals[materialId] || 0
-        const availableQty = received - consumed
-
-        if (availableQty > 0) {
-          available.push({
-            material_id: materialId,
-            material_name: grnTotals[materialId].material_name,
-            unit: grnTotals[materialId].unit,
-            available_quantity: availableQty
-          })
-        }
-      })
-
-      // Sort by material name
-      available.sort((a, b) => a.material_name.localeCompare(b.material_name))
-      setAvailableInventory(available)
-    } catch (error) {
-      console.error('Error fetching inventory:', error)
-      toast.error('Failed to load available inventory')
-    } finally {
-      setLoadingInventory(false)
-    }
-  }
-
-  function openConsumptionDialog(lineItem: BOQLineItem) {
-    setSelectedLineItemForConsumption(lineItem)
-    setEditingConsumption(null)
-    setConsumptionFormData({
-      ...emptyConsumption,
-      consumption_date: new Date().toISOString().split('T')[0]
-    })
-    setConsumptionDialogOpen(true)
-
-    // Fetch available inventory for the site
-    if (headline?.packages?.sites?.id) {
-      fetchAvailableInventory(headline.packages.sites.id)
-    }
-  }
-
-  function openEditConsumptionDialog(consumption: Consumption) {
-    const lineItem = lineItems.find(li => li.id === consumption.line_item_id)
-    if (lineItem) {
-      setSelectedLineItemForConsumption(lineItem)
-    }
-    setEditingConsumption(consumption)
-    setConsumptionFormData({
-      consumption_date: consumption.consumption_date,
-      material_id: consumption.material_id,
-      quantity: consumption.quantity,
-      notes: consumption.notes || ''
-    })
-    setConsumptionDialogOpen(true)
-
-    // Fetch available inventory for the site
-    if (headline?.packages?.sites?.id) {
-      fetchAvailableInventory(headline.packages.sites.id)
-    }
-  }
-
-  async function handleSaveConsumption(e: React.FormEvent) {
-    e.preventDefault()
-
-    if (!consumptionFormData.material_id) {
-      toast.error('Please select a material')
-      return
-    }
-
-    if (consumptionFormData.quantity <= 0) {
-      toast.error('Quantity must be greater than 0')
-      return
-    }
-
-    // Validate quantity against available inventory
-    const selectedMaterial = availableInventory.find(i => i.material_id === consumptionFormData.material_id)
-    if (selectedMaterial) {
-      // For editing, we need to add back the original quantity to the available
-      let availableForValidation = selectedMaterial.available_quantity
-      if (editingConsumption && editingConsumption.material_id === consumptionFormData.material_id) {
-        availableForValidation += editingConsumption.quantity
-      }
-
-      if (consumptionFormData.quantity > availableForValidation) {
-        toast.error(`Cannot consume more than available (${availableForValidation.toLocaleString('en-IN', { maximumFractionDigits: 3 })} ${selectedMaterial.unit})`)
-        return
-      }
-    }
-
-    setSaving(true)
-
-    try {
-      const selectedMaterial = availableInventory.find(i => i.material_id === consumptionFormData.material_id)
-
-      if (editingConsumption) {
-        const { error } = await supabase
-          .from('material_consumption')
-          .update({
-            consumption_date: consumptionFormData.consumption_date,
-            material_id: consumptionFormData.material_id,
-            material_name: selectedMaterial?.material_name || '',
-            quantity: consumptionFormData.quantity,
-            unit: selectedMaterial?.unit || '',
-            notes: consumptionFormData.notes || null
-          })
-          .eq('id', editingConsumption.id)
-
-        if (error) throw error
-        toast.success('Consumption record updated')
-      } else {
-        const { error } = await supabase
-          .from('material_consumption')
-          .insert({
-            line_item_id: selectedLineItemForConsumption?.id,
-            site_id: headline?.packages?.sites?.id,
-            material_id: consumptionFormData.material_id,
-            material_name: selectedMaterial?.material_name || '',
-            consumption_date: consumptionFormData.consumption_date,
-            quantity: consumptionFormData.quantity,
-            unit: selectedMaterial?.unit || '',
-            notes: consumptionFormData.notes || null
-          })
-
-        if (error) throw error
-        toast.success('Consumption recorded')
-      }
-
-      setConsumptionDialogOpen(false)
-      fetchData()
-    } catch (error) {
-      console.error('Error saving consumption:', error)
-      toast.error('Failed to save consumption')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function deleteConsumption(id: string) {
-    if (!confirm('Delete this consumption record?')) {
-      return
-    }
-
-    try {
-      const { error } = await supabase
-        .from('material_consumption')
-        .delete()
-        .eq('id', id)
-
-      if (error) throw error
-      toast.success('Consumption deleted')
-      fetchData()
-    } catch (error) {
-      console.error('Error deleting consumption:', error)
-      toast.error('Failed to delete consumption')
-    }
-  }
-
+  // Workstation Consumption helper functions
   function toggleConsumptionExpand(lineItemId: string) {
     const newExpanded = new Set(expandedConsumptions)
     if (newExpanded.has(lineItemId)) {
@@ -823,7 +639,7 @@ export default function BOQDetailPage() {
   }
 
   function getConsumptionsForLineItem(lineItemId: string) {
-    return consumptions.filter(c => c.line_item_id === lineItemId)
+    return workstationConsumptions.filter(c => c.line_item_id === lineItemId)
   }
 
   async function updateLineItemStatus(lineItemId: string, field: 'checklist_status' | 'jmr_status', value: string) {
@@ -1014,7 +830,7 @@ export default function BOQDetailPage() {
                               )}
                               {lineItemConsumptions.length > 0 && (
                                 <Badge variant="secondary" className="text-xs">
-                                  <Flame className="h-3 w-3 mr-1" />
+                                  <Wrench className="h-3 w-3 mr-1" />
                                   {lineItemConsumptions.length} consumption{lineItemConsumptions.length !== 1 ? 's' : ''}
                                 </Badge>
                               )}
@@ -1066,15 +882,6 @@ export default function BOQDetailPage() {
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="text-orange-600 border-orange-200 hover:bg-orange-50 hover:text-orange-700"
-                              onClick={() => openConsumptionDialog(lineItem)}
-                            >
-                              <Flame className="h-4 w-4 mr-1.5" />
-                              Record Consumption
-                            </Button>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button variant="ghost" size="icon">
@@ -1125,43 +932,31 @@ export default function BOQDetailPage() {
                               {lineItemConsumptions.map((consumption) => (
                                 <div
                                   key={consumption.id}
-                                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-white border rounded-md"
+                                  className="p-3 bg-white border rounded-md"
                                 >
-                                  <div className="flex-1 min-w-0">
+                                  <div className="flex items-start justify-between">
                                     <div className="font-medium text-sm">{consumption.material_name}</div>
-                                    <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 mt-1">
-                                      <span className="flex items-center gap-1">
-                                        <Calendar className="h-3 w-3" />
-                                        {new Date(consumption.consumption_date).toLocaleDateString('en-IN')}
-                                      </span>
-                                      <span className="font-semibold text-orange-600">
-                                        {consumption.quantity.toLocaleString('en-IN', { maximumFractionDigits: 3 })} {consumption.unit}
-                                      </span>
-                                    </div>
-                                    {consumption.notes && (
-                                      <p className="text-xs text-slate-500 mt-1">{consumption.notes}</p>
-                                    )}
+                                    <Badge variant="secondary" className="text-xs">
+                                      {consumption.workstation_name}
+                                    </Badge>
                                   </div>
-                                  <div className="flex items-center gap-1">
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-8 w-8"
-                                      onClick={() => openEditConsumptionDialog(consumption)}
-                                    >
-                                      <Pencil className="h-3 w-3" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-8 w-8 text-red-600 hover:text-red-700"
-                                      onClick={() => deleteConsumption(consumption.id)}
-                                    >
-                                      <Trash2 className="h-3 w-3" />
-                                    </Button>
+                                  <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 mt-1">
+                                    <span className="flex items-center gap-1">
+                                      <Calendar className="h-3 w-3" />
+                                      {new Date(consumption.entry_date).toLocaleDateString('en-IN')}
+                                    </span>
+                                    <span className="font-semibold text-orange-600">
+                                      {consumption.quantity.toLocaleString('en-IN', { maximumFractionDigits: 3 })} {consumption.unit}
+                                    </span>
                                   </div>
+                                  {consumption.notes && (
+                                    <p className="text-xs text-slate-500 mt-1 italic">"{consumption.notes}"</p>
+                                  )}
                                 </div>
                               ))}
+                              <p className="text-xs text-slate-400 text-center pt-2">
+                                Consumption is recorded from the Workstations module
+                              </p>
                             </div>
                           </CollapsibleContent>
                         </Collapsible>
@@ -1354,115 +1149,6 @@ export default function BOQDetailPage() {
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setChecklistItemDialogOpen(false)}>Cancel</Button>
               <Button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Save'}</Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* Consumption Dialog */}
-      <Dialog open={consumptionDialogOpen} onOpenChange={setConsumptionDialogOpen}>
-        <DialogContent className="max-w-md">
-          <form onSubmit={handleSaveConsumption}>
-            <DialogHeader>
-              <DialogTitle>{editingConsumption ? 'Edit Consumption' : 'Record Consumption'}</DialogTitle>
-              <DialogDescription>
-                {selectedLineItemForConsumption && (
-                  <span className="block mt-1">
-                    For: <span className="font-medium">{selectedLineItemForConsumption.item_number}</span> - {selectedLineItemForConsumption.description.substring(0, 50)}...
-                  </span>
-                )}
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 py-4">
-              <div className="space-y-2">
-                <Label htmlFor="consumption_date">Date *</Label>
-                <Input
-                  id="consumption_date"
-                  type="date"
-                  value={consumptionFormData.consumption_date}
-                  onChange={(e) => setConsumptionFormData({ ...consumptionFormData, consumption_date: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="material">Material *</Label>
-                {loadingInventory ? (
-                  <div className="text-sm text-slate-500 py-2">Loading available materials...</div>
-                ) : availableInventory.length === 0 ? (
-                  <div className="text-sm text-slate-500 py-2 bg-amber-50 border border-amber-200 rounded-md px-3">
-                    No materials available in inventory for this site. Record materials via GRN first.
-                  </div>
-                ) : (
-                  <Select
-                    value={consumptionFormData.material_id}
-                    onValueChange={(value) => setConsumptionFormData({ ...consumptionFormData, material_id: value, quantity: 0 })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select material" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableInventory.map((item) => (
-                        <SelectItem key={item.material_id} value={item.material_id}>
-                          <div className="flex justify-between items-center w-full">
-                            <span className="truncate">{item.material_name}</span>
-                            <span className="text-xs text-slate-500 ml-2">
-                              ({item.available_quantity.toLocaleString('en-IN', { maximumFractionDigits: 3 })} {item.unit})
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
-              {consumptionFormData.material_id && (
-                <div className="space-y-2">
-                  <Label htmlFor="consumption_quantity">
-                    Quantity *
-                    {(() => {
-                      const selected = availableInventory.find(i => i.material_id === consumptionFormData.material_id)
-                      if (selected) {
-                        let availableForDisplay = selected.available_quantity
-                        if (editingConsumption && editingConsumption.material_id === consumptionFormData.material_id) {
-                          availableForDisplay += editingConsumption.quantity
-                        }
-                        return (
-                          <span className="text-xs text-slate-500 ml-2">
-                            (Available: {availableForDisplay.toLocaleString('en-IN', { maximumFractionDigits: 3 })} {selected.unit})
-                          </span>
-                        )
-                      }
-                      return null
-                    })()}
-                  </Label>
-                  <Input
-                    id="consumption_quantity"
-                    type="number"
-                    step="0.001"
-                    min="0.001"
-                    value={consumptionFormData.quantity || ''}
-                    onChange={(e) => setConsumptionFormData({ ...consumptionFormData, quantity: parseFloat(e.target.value) || 0 })}
-                    placeholder="Enter quantity"
-                    required
-                  />
-                </div>
-              )}
-              <div className="space-y-2">
-                <Label htmlFor="consumption_notes">Notes (Optional)</Label>
-                <Textarea
-                  id="consumption_notes"
-                  placeholder="Any additional details..."
-                  value={consumptionFormData.notes}
-                  onChange={(e) => setConsumptionFormData({ ...consumptionFormData, notes: e.target.value })}
-                  rows={2}
-                />
-              </div>
-            </div>
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setConsumptionDialogOpen(false)}>Cancel</Button>
-              <Button type="submit" disabled={saving || !consumptionFormData.material_id || consumptionFormData.quantity <= 0}>
-                {saving ? 'Saving...' : 'Save'}
-              </Button>
             </DialogFooter>
           </form>
         </DialogContent>

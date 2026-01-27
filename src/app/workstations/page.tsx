@@ -37,6 +37,11 @@ import {
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
+import {
   Wrench,
   Plus,
   ArrowLeft,
@@ -48,6 +53,9 @@ import {
   Trash2,
   Package,
   X,
+  Check,
+  ChevronsUpDown,
+  Search,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
@@ -139,6 +147,8 @@ interface MaterialConsumptionInput {
   material_name: string
   quantity: string
   unit: string
+  popoverOpen?: boolean
+  searchTerm?: string
 }
 
 export default function WorkstationsPage() {
@@ -446,10 +456,9 @@ export default function WorkstationsPage() {
       toast.error('Please select a BOQ line item')
       return
     }
-    if (!progressFormData.quantity || parseFloat(progressFormData.quantity) <= 0) {
-      toast.error('Please enter a valid quantity')
-      return
-    }
+
+    // Quantity is optional - allow 0 or empty for material-only entries
+    const quantity = progressFormData.quantity ? parseFloat(progressFormData.quantity) : 0
 
     setSaving(true)
     try {
@@ -460,7 +469,7 @@ export default function WorkstationsPage() {
           .update({
             boq_line_item_id: progressFormData.boq_line_item_id,
             entry_date: progressFormData.entry_date,
-            quantity: parseFloat(progressFormData.quantity),
+            quantity: quantity,
             notes: progressFormData.notes.trim() || null,
           })
           .eq('id', editingProgress.id)
@@ -502,7 +511,7 @@ export default function WorkstationsPage() {
             site_workstation_id: selectedWorkstation.id,
             boq_line_item_id: progressFormData.boq_line_item_id,
             entry_date: progressFormData.entry_date,
-            quantity: parseFloat(progressFormData.quantity),
+            quantity: quantity,
             notes: progressFormData.notes.trim() || null,
           })
           .select()
@@ -562,7 +571,41 @@ export default function WorkstationsPage() {
   }
 
   function addMaterialConsumption() {
-    setMaterialConsumptions([...materialConsumptions, { material_id: '', material_name: '', quantity: '', unit: '' }])
+    setMaterialConsumptions([...materialConsumptions, { material_id: '', material_name: '', quantity: '', unit: '', popoverOpen: false, searchTerm: '' }])
+  }
+
+  function setMaterialPopoverOpen(index: number, open: boolean) {
+    const updated = [...materialConsumptions]
+    updated[index] = { ...updated[index], popoverOpen: open, searchTerm: open ? '' : updated[index].searchTerm }
+    setMaterialConsumptions(updated)
+  }
+
+  function setMaterialSearchTerm(index: number, term: string) {
+    const updated = [...materialConsumptions]
+    updated[index] = { ...updated[index], searchTerm: term }
+    setMaterialConsumptions(updated)
+  }
+
+  function selectMaterial(index: number, material: MasterMaterial) {
+    const updated = [...materialConsumptions]
+    updated[index] = {
+      ...updated[index],
+      material_id: material.id,
+      material_name: material.name,
+      unit: material.unit,
+      popoverOpen: false,
+      searchTerm: ''
+    }
+    setMaterialConsumptions(updated)
+  }
+
+  function getFilteredMaterials(searchTerm: string) {
+    if (!searchTerm) return masterMaterials
+    const term = searchTerm.toLowerCase()
+    return masterMaterials.filter(m =>
+      m.name.toLowerCase().includes(term) ||
+      m.category?.toLowerCase().includes(term)
+    )
   }
 
   function updateMaterialConsumption(index: number, field: keyof MaterialConsumptionInput, value: string) {
@@ -1078,7 +1121,7 @@ export default function WorkstationsPage() {
 
       {/* Add/Edit Progress Dialog */}
       <Dialog open={progressDialogOpen} onOpenChange={setProgressDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {editingProgress ? 'Edit Progress Entry' : 'Add Progress Entry'}
@@ -1088,50 +1131,51 @@ export default function WorkstationsPage() {
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-4">
-            {/* Date */}
-            <div className="space-y-2">
-              <Label>Date *</Label>
-              <Input
-                type="date"
-                value={progressFormData.entry_date}
-                onChange={(e) => setProgressFormData({ ...progressFormData, entry_date: e.target.value })}
-              />
-            </div>
-
-            {/* BOQ Headline */}
-            <div className="space-y-2">
-              <Label>BOQ Headline *</Label>
-              <Select
-                value={progressFormData.headline_id}
-                onValueChange={(value) => setProgressFormData({
-                  ...progressFormData,
-                  headline_id: value,
-                  boq_line_item_id: '',
-                })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select headline" />
-                </SelectTrigger>
-                <SelectContent>
-                  {headlines.map((h) => (
-                    <SelectItem key={h.id} value={h.id}>
-                      {h.serial_number}. {h.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+          <div className="space-y-3 py-2">
+            {/* Row 1: Date and BOQ Headline */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Date *</Label>
+                <Input
+                  type="date"
+                  value={progressFormData.entry_date}
+                  onChange={(e) => setProgressFormData({ ...progressFormData, entry_date: e.target.value })}
+                  className="h-9"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">BOQ Headline *</Label>
+                <Select
+                  value={progressFormData.headline_id}
+                  onValueChange={(value) => setProgressFormData({
+                    ...progressFormData,
+                    headline_id: value,
+                    boq_line_item_id: '',
+                  })}
+                >
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Select headline" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {headlines.map((h) => (
+                      <SelectItem key={h.id} value={h.id}>
+                        {h.serial_number}. {h.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             {/* BOQ Line Item */}
-            <div className="space-y-2">
-              <Label>BOQ Line Item *</Label>
+            <div className="space-y-1">
+              <Label className="text-xs">BOQ Line Item *</Label>
               <Select
                 value={progressFormData.boq_line_item_id}
                 onValueChange={(value) => setProgressFormData({ ...progressFormData, boq_line_item_id: value })}
                 disabled={!progressFormData.headline_id}
               >
-                <SelectTrigger>
+                <SelectTrigger className="h-9">
                   <SelectValue placeholder={progressFormData.headline_id ? "Select line item" : "Select headline first"} />
                 </SelectTrigger>
                 <SelectContent>
@@ -1146,21 +1190,21 @@ export default function WorkstationsPage() {
 
             {/* Context Info */}
             {selectedLineItem && (
-              <div className="bg-slate-50 rounded-lg p-4">
-                <div className="grid grid-cols-3 gap-4 text-sm">
+              <div className="bg-slate-50 rounded-lg p-2">
+                <div className="grid grid-cols-3 gap-3 text-xs">
                   <div>
                     <span className="text-slate-500">Unit:</span>
-                    <span className="ml-2 font-medium">{selectedLineItem.unit}</span>
+                    <span className="ml-1 font-medium">{selectedLineItem.unit}</span>
                   </div>
                   <div>
                     <span className="text-slate-500">Previous Qty:</span>
-                    <span className="ml-2 font-medium">
+                    <span className="ml-1 font-medium">
                       {previousQtyForSelectedItem.toLocaleString('en-IN', { maximumFractionDigits: 3 })}
                     </span>
                   </div>
                   <div>
                     <span className="text-slate-500">BOQ Qty:</span>
-                    <span className="ml-2 font-medium">
+                    <span className="ml-1 font-medium">
                       {selectedLineItem.quantity.toLocaleString('en-IN', { maximumFractionDigits: 3 })}
                     </span>
                   </div>
@@ -1168,86 +1212,124 @@ export default function WorkstationsPage() {
               </div>
             )}
 
-            {/* Quantity */}
-            <div className="space-y-2">
-              <Label>Quantity (New Entry) *</Label>
-              <Input
-                type="number"
-                step="0.001"
-                placeholder="Enter quantity"
-                value={progressFormData.quantity}
-                onChange={(e) => setProgressFormData({ ...progressFormData, quantity: e.target.value })}
-              />
-            </div>
-
-            {/* Notes */}
-            <div className="space-y-2">
-              <Label>Notes (Optional)</Label>
-              <Textarea
-                placeholder="Add any notes..."
-                value={progressFormData.notes}
-                onChange={(e) => setProgressFormData({ ...progressFormData, notes: e.target.value })}
-                rows={2}
-              />
+            {/* Quantity and Notes in a row */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label className="text-xs">Quantity (Optional)</Label>
+                <Input
+                  type="number"
+                  step="0.001"
+                  placeholder="Enter quantity"
+                  value={progressFormData.quantity}
+                  onChange={(e) => setProgressFormData({ ...progressFormData, quantity: e.target.value })}
+                  className="h-9"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Notes (Optional)</Label>
+                <Input
+                  placeholder="Add any notes..."
+                  value={progressFormData.notes}
+                  onChange={(e) => setProgressFormData({ ...progressFormData, notes: e.target.value })}
+                  className="h-9"
+                />
+              </div>
             </div>
 
             {/* Material Consumption */}
-            <div className="space-y-3 pt-4 border-t">
+            <div className="space-y-2 pt-2 border-t">
               <div className="flex items-center justify-between">
-                <Label className="text-base">Material Consumption (Optional)</Label>
-                <Button type="button" variant="outline" size="sm" onClick={addMaterialConsumption}>
-                  <Plus className="h-4 w-4 mr-1" />
+                <Label className="text-sm font-medium">Material Consumption (Optional)</Label>
+                <Button type="button" variant="outline" size="sm" onClick={addMaterialConsumption} className="h-7 text-xs">
+                  <Plus className="h-3 w-3 mr-1" />
                   Add
                 </Button>
               </div>
 
               {materialConsumptions.length === 0 ? (
-                <p className="text-sm text-slate-500 text-center py-4">
+                <p className="text-xs text-slate-500 text-center py-2">
                   No materials added. Click "Add" to track material consumption.
                 </p>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {materialConsumptions.map((mc, index) => (
-                    <div key={index} className="flex gap-2 items-start">
+                    <div key={index} className="flex gap-2 items-center">
                       <div className="flex-1">
-                        <Select
-                          value={mc.material_id}
-                          onValueChange={(value) => updateMaterialConsumption(index, 'material_id', value)}
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select material" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {masterMaterials.map((m) => (
-                              <SelectItem key={m.id} value={m.id}>
-                                {m.name} ({m.unit})
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <Popover open={mc.popoverOpen} onOpenChange={(open) => setMaterialPopoverOpen(index, open)}>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              role="combobox"
+                              aria-expanded={mc.popoverOpen}
+                              className="w-full justify-between h-9 text-left font-normal"
+                            >
+                              {mc.material_id
+                                ? mc.material_name || "Select material"
+                                : "Search material..."}
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[320px] p-0" align="start">
+                            <div className="p-2 border-b">
+                              <div className="flex items-center gap-2 px-2">
+                                <Search className="h-4 w-4 text-slate-400" />
+                                <input
+                                  type="text"
+                                  placeholder="Type to search materials..."
+                                  className="flex-1 bg-transparent text-sm outline-none placeholder:text-slate-400"
+                                  value={mc.searchTerm || ''}
+                                  onChange={(e) => setMaterialSearchTerm(index, e.target.value)}
+                                  autoFocus
+                                />
+                              </div>
+                            </div>
+                            <div className="max-h-[200px] overflow-y-auto">
+                              {getFilteredMaterials(mc.searchTerm || '').length === 0 ? (
+                                <div className="py-4 text-center text-sm text-slate-500">
+                                  No materials found
+                                </div>
+                              ) : (
+                                getFilteredMaterials(mc.searchTerm || '').map((m) => (
+                                  <div
+                                    key={m.id}
+                                    className={`flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-slate-100 ${mc.material_id === m.id ? 'bg-slate-50' : ''}`}
+                                    onClick={() => selectMaterial(index, m)}
+                                  >
+                                    <Check
+                                      className={`h-4 w-4 ${mc.material_id === m.id ? "text-blue-600" : "text-transparent"}`}
+                                    />
+                                    <span className="flex-1 text-sm">{m.name}</span>
+                                    <span className="text-xs text-slate-500">({m.unit})</span>
+                                  </div>
+                                ))
+                              )}
+                            </div>
+                          </PopoverContent>
+                        </Popover>
                       </div>
-                      <div className="w-24">
+                      <div className="w-20">
                         <Input
                           type="number"
                           step="0.001"
                           placeholder="Qty"
                           value={mc.quantity}
                           onChange={(e) => updateMaterialConsumption(index, 'quantity', e.target.value)}
+                          className="h-9"
                         />
                       </div>
-                      <div className="w-20">
+                      <div className="w-16">
                         <Input
                           placeholder="Unit"
                           value={mc.unit}
                           readOnly
-                          className="bg-slate-50"
+                          className="bg-slate-50 h-9 text-xs"
                         />
                       </div>
                       <Button
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="text-red-600"
+                        className="text-red-600 h-9 w-9"
                         onClick={() => removeMaterialConsumption(index)}
                       >
                         <X className="h-4 w-4" />
