@@ -87,6 +87,7 @@ async function main() {
   const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
 
   // Parse invoices from Excel
+  // Excel columns: 0:Invoice, 1:Supplier, 2:InvAmt, 3:Date, 4:Material, 5:Qty, 6:Unit, 7:Rate, 8:AmtNoGST, 9:AmtWithGST
   const invoices = [];
   let currentInvoice = null;
 
@@ -95,9 +96,11 @@ async function main() {
     const supplierName = row[1];
     const invoiceDate = row[3];
     const materialDesc = row[4];
-    const qty = row[5];
+    const qty = parseFloat(row[5]) || 0;
     const unit = row[6];
-    const rate = row[7];
+    const rate = parseFloat(row[7]) || 0;           // Use EXACT Rate from Excel
+    const amountNoGst = parseFloat(row[8]) || 0;    // Use EXACT Amount from Excel
+    const amountWithGst = parseFloat(row[9]) || 0;  // Use EXACT Amount with GST from Excel
 
     if (invoiceNo) {
       currentInvoice = {
@@ -109,12 +112,14 @@ async function main() {
       invoices.push(currentInvoice);
     }
 
-    if (materialDesc && currentInvoice) {
+    if (materialDesc && currentInvoice && qty > 0) {
       currentInvoice.line_items.push({
         material_name: String(materialDesc).trim(),
-        quantity: parseFloat(qty) || 0,
+        quantity: qty,
         unit: unit ? String(unit).trim() : 'Nos',
-        rate: parseFloat(rate) || 0
+        rate: rate,
+        amount_without_gst: amountNoGst,
+        amount_with_gst: amountWithGst
       });
     }
   });
@@ -250,7 +255,7 @@ async function main() {
       continue;
     }
 
-    // Create line items
+    // Create line items with exact values from Excel
     const lineItems = inv.line_items.map(item => {
       const matKey = item.material_name.toLowerCase().trim();
       const material = materialMap.get(matKey);
@@ -262,7 +267,9 @@ async function main() {
         quantity: item.quantity,
         unit: item.unit,
         rate: item.rate,
-        gst_rate: 18.00  // Using 18% GST as shown in Excel header
+        gst_rate: 18.00,
+        amount_without_gst: item.amount_without_gst,
+        amount_with_gst: item.amount_with_gst
       };
     }).filter(item => item.material_id); // Only items with valid material_id
 
