@@ -165,8 +165,11 @@ app/
 
 ### GRN Tables (Invoice-based)
 - `grn_invoices` - GRN invoice headers (site_id, supplier_id, invoice_number, grn_date)
-- `grn_line_items` - Materials per invoice (with GST calculation)
-- `grn_invoice_dc` - Delivery challan documents
+- `grn_line_items` - Materials per invoice
+  - material_id, material_name, quantity, unit, rate, gst_rate
+  - amount_without_gst, amount_with_gst (stored values, not computed)
+  - Note: Amounts are stored directly from Excel to preserve discounts
+- `grn_invoice_dc` - Delivery challan documents (invoice-level)
 - `grn_line_item_documents` - MIR, Test Cert, TDS per material
 
 ### Master Data Tables
@@ -368,6 +371,40 @@ Key migrations:
 - `018_expense_manpower_update.sql` - Manpower expense time tracking fields
 - `019_labour_contractors_and_categories.sql` - Labour contractors and categories tables
 - `020_workstation_management.sql` - Workstation tables and 29 predefined workstations
+- `021_grn_line_items_fix.sql` - Convert GRN amount columns from computed to stored values
+
+## Import/Utility Scripts
+
+Located in `app/` directory for data import operations:
+
+### `import-data.js`
+Import materials and suppliers from Excel to master data.
+```bash
+node import-data.js
+```
+- Reads from `../Materials and Suppliers.xlsx`
+- Imports to `master_materials` and `suppliers` tables
+- Handles duplicate detection
+
+### `import-grn.js`
+Import GRN invoices and line items from Excel.
+```bash
+node import-grn.js
+```
+- Reads from consolidated invoice Excel file
+- Creates `grn_invoices` and `grn_line_items` entries
+- Uses exact Rate, Amount (no GST), Amount with GST from Excel
+- Excel columns: Invoice no., Supplier, Invoice Amount, Date, Material, Qty, Unit, Rate, Amount, Amount with GST
+
+### `upload-invoices.js`
+Upload invoice PDF documents to Supabase Storage.
+```bash
+node upload-invoices.js
+```
+- Reads PDF files from invoice folder
+- Matches filenames to invoice numbers (handles various formats)
+- Uploads to `compliance-docs` bucket
+- Creates/updates `grn_invoice_dc` records
 
 ## Development
 ```bash
