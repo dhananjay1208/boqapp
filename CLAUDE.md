@@ -67,6 +67,15 @@ app/
 - Bill of Quantities with packages, headlines, line items
 - Import from Excel
 - Track materials per line item
+- **Progress Tracking** (per line item):
+  - **BOQ Qty**: Planned quantity from BOQ
+  - **Upto Date**: Sum of all progress entries from Workstations (across all workstations)
+  - **Remaining**: BOQ Qty - Upto Date
+  - **Progress Bar**: Visual indicator with color coding
+    - Red (0-25%): Behind schedule
+    - Amber (25-75%): In progress
+    - Green (75-100%): Near completion
+    - Blue (>100%): Over-executed
 - **Consumption History** (read-only):
   - Displays material consumption recorded from Workstations module
   - Shows material name, quantity, workstation name, date
@@ -236,13 +245,23 @@ Reports module with expandable submenu:
   - workstation_boq_progress_id, material_id, material_name, quantity, unit
   - **Source of truth for BOQ line item consumption history**
 
-### Data Flow: Workstation → BOQ Consumption
+### Data Flow: Workstation → BOQ
+
 ```
 Workstations Module (/workstations)
-    ↓ Records progress + material consumption
-workstation_material_consumption table
-    ↓ Joined with workstation_boq_progress → site_workstations → master_workstations
-BOQ Management (/boq/[id]) reads consumption history (read-only)
+    ↓ Records progress entries (quantity) + material consumption
+    ↓
+┌─────────────────────────────────────────────────────────────┐
+│ workstation_boq_progress table                              │
+│   - boq_line_item_id, quantity, entry_date                  │
+│                                                             │
+│ workstation_material_consumption table                      │
+│   - material_name, quantity, unit                           │
+└─────────────────────────────────────────────────────────────┘
+    ↓
+BOQ Management (/boq/[id]) reads:
+    1. Progress: SUM(quantity) from workstation_boq_progress → "Upto Date"
+    2. Consumption: workstation_material_consumption → "Consumption History"
 ```
 
 ## Supabase Storage Buckets
