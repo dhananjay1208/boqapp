@@ -115,11 +115,15 @@ app/
   - Number of persons, start time, end time
   - Auto-calculated hours and amount (hourly rate × hours × persons)
   - Remarks field for worker names
-- **Equipment Tab**: Equipment usage with hours and auto-calculated amount
+- **Equipment Tab**: Record equipment expenses with:
+  - Cascading dropdowns: Supplier → Equipment (filtered by supplier)
+  - Hours input with auto-calculated amount (hourly rate × hours)
+  - Rate info displays daily rate and calculated hourly rate
+  - Falls back to master_equipment hourly_rate if no rates defined
 - **Other Tab**: Miscellaneous expenses
 - **Export to Excel**: Daily expense report with all categories
   - Summary sheet with totals
-  - Detailed sheets for each category
+  - Detailed sheets for each category (includes supplier for equipment)
 
 ### 6. Expense Dashboard (`/expense-dashboard`)
 - Charts and analytics for expenses
@@ -186,7 +190,12 @@ Reports module with expandable submenu:
 - **Workstations** (`/master-data/workstations`): Workstation name, description
 - **Materials** (`/master-data/materials`): Category, name, unit, HSN code
 - **Suppliers** (`/master-data/suppliers`): Name, GSTIN, address, contact
-- **Equipment** (`/master-data/equipment`): Equipment name, hourly rate
+- **Equipment Types** (`/master-data/equipment-types`): Equipment type names (JCB, Roller, Crane, etc.)
+- **Equipment Rates** (`/master-data/equipment`):
+  - Links supplier + equipment type
+  - Daily rate, daily hours
+  - Auto-calculated hourly rate displayed
+  - Similar pattern to Manpower Rates
 - **Labour Contractors** (`/master-data/labour-contractors`):
   - Contractor name, contact person, contact number, address
 - **Manpower Categories** (`/master-data/manpower-categories`):
@@ -228,6 +237,11 @@ Reports module with expandable submenu:
   - gender (male, female, any)
   - rate (daily rate)
   - daily_hours
+- `master_equipment_rates` - Equipment rates (similar to manpower)
+  - supplier_id (FK to suppliers)
+  - equipment_id (FK to master_equipment)
+  - rate (daily rate)
+  - daily_hours
 
 ### Expense Tables
 - `expense_manpower` - Manpower expenses
@@ -236,6 +250,8 @@ Reports module with expandable submenu:
   - hours, rate (hourly), amount
   - notes (for worker names)
 - `expense_equipment` - Equipment expenses
+  - supplier_id, supplier_name (FK to suppliers)
+  - equipment_id, equipment_name, hours, rate, amount
 - `expense_other` - Other expenses
 
 ### Payment Tables
@@ -449,7 +465,7 @@ Reports submenu items (expandable group):
 - Overview, MIR Reports
 
 Master Data submenu items (expandable group):
-- Workstations, Material List, Equipment, Labour Contractors, Manpower Categories, Manpower Rates, Suppliers
+- Workstations, Material List, Equipment Types, Equipment Rates, Labour Contractors, Manpower Categories, Manpower Rates, Suppliers
 
 To add a new page:
 1. Create page in `src/app/[page-name]/page.tsx`
@@ -475,6 +491,7 @@ Key migrations:
 - `020_workstation_management.sql` - Workstation tables and 29 predefined workstations
 - `021_grn_line_items_fix.sql` - Convert GRN amount columns from computed to stored values
 - `022_grn_invoice_date.sql` - Add invoice_date column to grn_invoices
+- `023_equipment_rates.sql` - Equipment rates table (supplier + equipment + rate), add supplier columns to expense_equipment
 
 ## Import/Utility Scripts
 

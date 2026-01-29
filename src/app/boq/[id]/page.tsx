@@ -132,7 +132,7 @@ const emptyLineItem = {
   item_number: '',
   description: '',
   location: '',
-  unit: 'cum',
+  unit: 'LS',
   quantity: 0,
 }
 
@@ -371,6 +371,11 @@ export default function BOQDetailPage() {
 
     if (!lineItemFormData.description.trim()) {
       toast.error('Description is required')
+      return
+    }
+
+    if (!lineItemFormData.unit || lineItemFormData.unit === '__custom__') {
+      toast.error('Please enter a valid unit')
       return
     }
 
@@ -1121,23 +1126,53 @@ export default function BOQDetailPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Unit *</Label>
-                  <Select
-                    value={lineItemFormData.unit}
-                    onValueChange={(value) => setLineItemFormData({ ...lineItemFormData, unit: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="nos">nos</SelectItem>
-                      <SelectItem value="cum">cum</SelectItem>
-                      <SelectItem value="Cu.m">Cu.m</SelectItem>
-                      <SelectItem value="Sq.m">Sq.m</SelectItem>
-                      <SelectItem value="ton">ton</SelectItem>
-                      <SelectItem value="kg">kg</SelectItem>
-                      <SelectItem value="Rmt">Rmt</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  {['LS', 'nos', 'cum', 'Cu.m', 'Sq.m', 'ton', 'kg', 'Rmt'].includes(lineItemFormData.unit) ? (
+                    <Select
+                      value={lineItemFormData.unit}
+                      onValueChange={(value) => {
+                        if (value === '__other__') {
+                          setLineItemFormData({ ...lineItemFormData, unit: '__custom__' })
+                        } else {
+                          setLineItemFormData({ ...lineItemFormData, unit: value })
+                        }
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="LS">LS (Lumpsum)</SelectItem>
+                        <SelectItem value="nos">nos</SelectItem>
+                        <SelectItem value="cum">cum</SelectItem>
+                        <SelectItem value="Cu.m">Cu.m</SelectItem>
+                        <SelectItem value="Sq.m">Sq.m</SelectItem>
+                        <SelectItem value="ton">ton</SelectItem>
+                        <SelectItem value="kg">kg</SelectItem>
+                        <SelectItem value="Rmt">Rmt</SelectItem>
+                        <SelectItem value="__other__">Other (custom)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Enter custom unit"
+                        value={lineItemFormData.unit === '__custom__' ? '' : lineItemFormData.unit}
+                        onChange={(e) => setLineItemFormData({ ...lineItemFormData, unit: e.target.value || '__custom__' })}
+                        className="flex-1"
+                        autoFocus
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setLineItemFormData({ ...lineItemFormData, unit: 'LS' })}
+                        className="px-2"
+                        title="Back to list"
+                      >
+                        ✕
+                      </Button>
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="quantity">Quantity *</Label>

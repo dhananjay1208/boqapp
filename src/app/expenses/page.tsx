@@ -84,6 +84,21 @@ interface Equipment {
   hourly_rate: number
 }
 
+interface EquipmentRate {
+  id: string
+  supplier_id: string
+  equipment_id: string
+  rate: number           // Daily rate in INR
+  daily_hours: number    // Hours per day (default 8)
+  supplier?: { id: string; supplier_name: string } | null
+  equipment?: { id: string; name: string } | null
+}
+
+interface EquipmentSupplier {
+  id: string
+  supplier_name: string
+}
+
 interface GRNInvoice {
   id: string
   invoice_number: string
@@ -121,6 +136,8 @@ interface ManpowerExpense {
 interface EquipmentExpense {
   id: string
   expense_date: string
+  supplier_id: string | null
+  supplier_name: string | null
   equipment_id: string
   equipment_name: string
   hours: number
@@ -149,6 +166,8 @@ export default function ExpensesPage() {
   const [manpowerCategories, setManpowerCategories] = useState<ManpowerCategory[]>([])
   const [manpowerList, setManpowerList] = useState<Manpower[]>([])
   const [equipmentList, setEquipmentList] = useState<Equipment[]>([])
+  const [equipmentRates, setEquipmentRates] = useState<EquipmentRate[]>([])
+  const [equipmentSuppliers, setEquipmentSuppliers] = useState<EquipmentSupplier[]>([])
 
   // Expenses
   const [grnInvoices, setGrnInvoices] = useState<GRNInvoice[]>([])
@@ -177,7 +196,7 @@ export default function ExpensesPage() {
     end_time: '17:00',
     notes: ''
   })
-  const [equipmentForm, setEquipmentForm] = useState({ equipment_id: '', hours: 0, notes: '' })
+  const [equipmentForm, setEquipmentForm] = useState({ supplier_id: '', equipment_id: '', hours: 0, notes: '' })
   const [otherForm, setOtherForm] = useState({ description: '', amount: 0, notes: '' })
 
   const [saving, setSaving] = useState(false)
@@ -241,7 +260,7 @@ export default function ExpensesPage() {
       if (manpowerError) throw manpowerError
       setManpowerList(manpowerData || [])
 
-      // Fetch equipment
+      // Fetch equipment (for backward compatibility)
       const { data: equipmentData, error: equipmentError } = await supabase
         .from('master_equipment')
         .select('id, name, hourly_rate')
@@ -250,6 +269,27 @@ export default function ExpensesPage() {
 
       if (equipmentError) throw equipmentError
       setEquipmentList(equipmentData || [])
+
+      // Fetch equipment rates with joins
+      const { data: equipmentRatesData, error: equipmentRatesError } = await supabase
+        .from('master_equipment_rates')
+        .select(`
+          *,
+          supplier:suppliers(id, supplier_name),
+          equipment:master_equipment(id, name)
+        `)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+
+      if (equipmentRatesError) throw equipmentRatesError
+      setEquipmentRates(equipmentRatesData || [])
+
+      // Extract unique suppliers from equipment rates
+      const suppliersFromRates = (equipmentRatesData || [])
+        .map(r => r.supplier)
+        .filter((s): s is { id: string; supplier_name: string } => s !== null)
+      const uniqueSuppliers = Array.from(new Map(suppliersFromRates.map(s => [s.id, s])).values())
+      setEquipmentSuppliers(uniqueSuppliers)
     } catch (error) {
       console.error('Error fetching initial data:', error)
       toast.error('Failed to load data')
@@ -504,11 +544,12 @@ export default function ExpensesPage() {
     const equipmentRows: any[][] = [
       ['EQUIPMENT EXPENSES'],
       [],
-      ['Equipment', 'Hours', 'Rate/Hr', 'Amount', 'Notes'],
+      ['Supplier', 'Equipment', 'Hours', 'Rate/Hr', 'Amount', 'Notes'],
     ]
 
     equipmentExpenses.forEach(exp => {
       equipmentRows.push([
+        exp.supplier_name || '-',
         exp.equipment_name,
         exp.hours,
         exp.rate,
@@ -519,11 +560,11 @@ export default function ExpensesPage() {
 
     if (equipmentExpenses.length > 0) {
       equipmentRows.push([])
-      equipmentRows.push(['', '', 'TOTAL', equipmentTotal, ''])
+      equipmentRows.push(['', '', '', 'TOTAL', equipmentTotal, ''])
     }
 
     const equipmentWs = XLSX.utils.aoa_to_sheet(equipmentRows)
-    equipmentWs['!cols'] = [{ wch: 25 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 30 }]
+    equipmentWs['!cols'] = [{ wch: 20 }, { wch: 20 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 30 }]
     XLSX.utils.book_append_sheet(wb, equipmentWs, 'Equipment')
 
     // ============ OTHER EXPENSES SHEET ============
@@ -663,18 +704,40 @@ export default function ExpensesPage() {
     if (expense) {
       setEditingEquipment(expense)
       setEquipmentForm({
+        supplier_id: expense.supplier_id || '',
         equipment_id: expense.equipment_id,
         hours: expense.hours,
         notes: expense.notes || '',
       })
     } else {
       setEditingEquipment(null)
-      setEquipmentForm({ equipment_id: '', hours: 0, notes: '' })
+      setEquipmentForm({ supplier_id: '', equipment_id: '', hours: 0, notes: '' })
     }
     setEquipmentDialogOpen(true)
   }
 
-  function getEquipmentRate(equipmentId: string): number {
+  // Get equipment types available for selected supplier
+  function getEquipmentForSupplier(supplierId: string) {
+    return equipmentRates
+      .filter(r => r.supplier_id === supplierId)
+      .map(r => r.equipment)
+      .filter((eq): eq is { id: string; name: string } => eq !== null)
+  }
+
+  // Find equipment rate for supplier+equipment combo
+  function findEquipmentRate(supplierId: string, equipmentId: string): EquipmentRate | undefined {
+    return equipmentRates.find(r =>
+      r.supplier_id === supplierId && r.equipment_id === equipmentId
+    )
+  }
+
+  // Get hourly rate for equipment (from rates or fallback to master_equipment)
+  function getEquipmentHourlyRate(supplierId: string, equipmentId: string): number {
+    const rate = findEquipmentRate(supplierId, equipmentId)
+    if (rate) {
+      return rate.daily_hours > 0 ? rate.rate / rate.daily_hours : 0
+    }
+    // Fallback to master_equipment hourly_rate for backward compatibility
     const eq = equipmentList.find(e => e.id === equipmentId)
     return eq?.hourly_rate || 0
   }
@@ -684,7 +747,17 @@ export default function ExpensesPage() {
     return eq?.name || ''
   }
 
+  function getSupplierName(supplierId: string): string {
+    const supplier = equipmentSuppliers.find(s => s.id === supplierId)
+    return supplier?.supplier_name || ''
+  }
+
   async function saveEquipmentExpense() {
+    // If we have equipment rates, require supplier selection
+    if (equipmentRates.length > 0 && !equipmentForm.supplier_id) {
+      toast.error('Please select a supplier')
+      return
+    }
     if (!equipmentForm.equipment_id) {
       toast.error('Please select equipment')
       return
@@ -694,9 +767,10 @@ export default function ExpensesPage() {
       return
     }
 
-    const rate = getEquipmentRate(equipmentForm.equipment_id)
-    const amount = equipmentForm.hours * rate
-    const name = getEquipmentName(equipmentForm.equipment_id)
+    const hourlyRate = getEquipmentHourlyRate(equipmentForm.supplier_id, equipmentForm.equipment_id)
+    const amount = equipmentForm.hours * hourlyRate
+    const equipmentName = getEquipmentName(equipmentForm.equipment_id)
+    const supplierName = equipmentForm.supplier_id ? getSupplierName(equipmentForm.supplier_id) : null
 
     setSaving(true)
     try {
@@ -704,10 +778,12 @@ export default function ExpensesPage() {
         const { error } = await supabase
           .from('expense_equipment')
           .update({
+            supplier_id: equipmentForm.supplier_id || null,
+            supplier_name: supplierName,
             equipment_id: equipmentForm.equipment_id,
-            equipment_name: name,
+            equipment_name: equipmentName,
             hours: equipmentForm.hours,
-            rate: rate,
+            rate: hourlyRate,
             amount: amount,
             notes: equipmentForm.notes || null,
           })
@@ -721,10 +797,12 @@ export default function ExpensesPage() {
           .insert({
             site_id: selectedSiteId,
             expense_date: selectedDate,
+            supplier_id: equipmentForm.supplier_id || null,
+            supplier_name: supplierName,
             equipment_id: equipmentForm.equipment_id,
-            equipment_name: name,
+            equipment_name: equipmentName,
             hours: equipmentForm.hours,
-            rate: rate,
+            rate: hourlyRate,
             amount: amount,
             notes: equipmentForm.notes || null,
           })
@@ -1178,7 +1256,12 @@ export default function ExpensesPage() {
                       {equipmentExpenses.map((expense) => (
                         <div key={expense.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
                           <div className="flex-1">
-                            <div className="font-medium text-sm">{expense.equipment_name}</div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium text-sm">{expense.equipment_name}</span>
+                              {expense.supplier_name && (
+                                <span className="text-xs text-slate-500">({expense.supplier_name})</span>
+                              )}
+                            </div>
                             <div className="flex items-center gap-3 text-xs text-slate-500 mt-1">
                               <span>{expense.hours} hrs</span>
                               <span>@ {expense.rate.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}/hr</span>
@@ -1461,27 +1544,99 @@ export default function ExpensesPage() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{editingEquipment ? 'Edit Equipment Expense' : 'Add Equipment Expense'}</DialogTitle>
-            <DialogDescription>Select equipment and enter hours used</DialogDescription>
+            <DialogDescription>Select supplier and equipment, then enter hours used</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-4">
-            <div className="space-y-2">
-              <Label>Equipment *</Label>
-              <Select
-                value={equipmentForm.equipment_id}
-                onValueChange={(value) => setEquipmentForm({ ...equipmentForm, equipment_id: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select equipment" />
-                </SelectTrigger>
-                <SelectContent>
-                  {equipmentList.map((eq) => (
-                    <SelectItem key={eq.id} value={eq.id}>
-                      {eq.name} - {eq.hourly_rate.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}/hr
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {/* Supplier Selection - only show if we have equipment rates */}
+            {equipmentRates.length > 0 ? (
+              <>
+                <div className="space-y-2">
+                  <Label>Supplier *</Label>
+                  <Select
+                    value={equipmentForm.supplier_id}
+                    onValueChange={(value) => setEquipmentForm({
+                      ...equipmentForm,
+                      supplier_id: value,
+                      equipment_id: '', // Reset equipment when supplier changes
+                    })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select supplier" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {equipmentSuppliers.map((supplier) => (
+                        <SelectItem key={supplier.id} value={supplier.id}>
+                          {supplier.supplier_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {equipmentSuppliers.length === 0 && (
+                    <p className="text-xs text-amber-600">No suppliers with equipment rates. Add rates in Equipment Rates page.</p>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Equipment * {!equipmentForm.supplier_id && <span className="text-xs text-slate-400">(select supplier first)</span>}</Label>
+                  <Select
+                    value={equipmentForm.equipment_id}
+                    onValueChange={(value) => setEquipmentForm({ ...equipmentForm, equipment_id: value })}
+                    disabled={!equipmentForm.supplier_id}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select equipment" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {getEquipmentForSupplier(equipmentForm.supplier_id).map((eq) => (
+                        <SelectItem key={eq.id} value={eq.id}>
+                          {eq.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {equipmentForm.supplier_id && getEquipmentForSupplier(equipmentForm.supplier_id).length === 0 && (
+                    <p className="text-xs text-amber-600">No equipment rates for this supplier.</p>
+                  )}
+                </div>
+
+                {/* Show selected rate info */}
+                {equipmentForm.supplier_id && equipmentForm.equipment_id && (() => {
+                  const rate = findEquipmentRate(equipmentForm.supplier_id, equipmentForm.equipment_id)
+                  if (!rate) return null
+                  const hourlyRate = rate.daily_hours > 0 ? rate.rate / rate.daily_hours : 0
+                  return (
+                    <div className="p-2 bg-slate-100 rounded text-xs text-slate-600">
+                      Daily Rate: {rate.rate.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })} for {rate.daily_hours} hrs
+                      (₹{hourlyRate.toFixed(2)}/hr)
+                    </div>
+                  )
+                })()}
+              </>
+            ) : (
+              // Fallback to direct equipment selection if no rates defined
+              <div className="space-y-2">
+                <Label>Equipment *</Label>
+                <Select
+                  value={equipmentForm.equipment_id}
+                  onValueChange={(value) => setEquipmentForm({ ...equipmentForm, equipment_id: value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select equipment" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {equipmentList.map((eq) => (
+                      <SelectItem key={eq.id} value={eq.id}>
+                        {eq.name} - {eq.hourly_rate.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}/hr
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-slate-500">
+                  No equipment rates defined. Using hourly rates from Equipment Master.
+                </p>
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label htmlFor="equipment_hours">Hours Used *</Label>
               <Input
@@ -1494,16 +1649,29 @@ export default function ExpensesPage() {
                 placeholder="0"
               />
             </div>
-            {equipmentForm.equipment_id && equipmentForm.hours > 0 && (
-              <div className="p-3 bg-orange-50 rounded-lg border border-orange-200">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-orange-700">Calculated Amount:</span>
-                  <span className="font-bold text-orange-800">
-                    {(equipmentForm.hours * getEquipmentRate(equipmentForm.equipment_id)).toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}
-                  </span>
+
+            {/* Calculated Amount Display */}
+            {equipmentForm.equipment_id && equipmentForm.hours > 0 && (() => {
+              const hourlyRate = getEquipmentHourlyRate(equipmentForm.supplier_id, equipmentForm.equipment_id)
+              const totalAmount = equipmentForm.hours * hourlyRate
+              return (
+                <div className="p-3 bg-orange-50 rounded-lg border border-orange-200">
+                  <div className="space-y-1 text-sm">
+                    <div className="flex justify-between text-slate-600">
+                      <span>Calculation:</span>
+                      <span>{equipmentForm.hours} hrs × ₹{hourlyRate.toFixed(2)}/hr</span>
+                    </div>
+                    <div className="flex justify-between text-orange-700 font-medium pt-1 border-t border-orange-200">
+                      <span>Total Amount:</span>
+                      <span className="font-bold">
+                        {totalAmount.toLocaleString('en-IN', { style: 'currency', currency: 'INR' })}
+                      </span>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            )}
+              )
+            })()}
+
             <div className="space-y-2">
               <Label htmlFor="equipment_notes">Notes</Label>
               <Textarea

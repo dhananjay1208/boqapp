@@ -144,10 +144,11 @@ export default function DashboardPage() {
   async function fetchExpenseSummary() {
     try {
       // Fetch all expense types in parallel
+      // Material expenses come from GRN invoices (grn_line_items.amount_with_gst)
       const [materialRes, manpowerRes, equipmentRes, otherRes] = await Promise.all([
         supabase
-          .from('expense_material')
-          .select('amount')
+          .from('grn_invoices')
+          .select('grn_line_items(amount_with_gst)')
           .eq('site_id', selectedSiteId),
         supabase
           .from('expense_manpower')
@@ -163,7 +164,13 @@ export default function DashboardPage() {
           .eq('site_id', selectedSiteId),
       ])
 
-      const material = (materialRes.data || []).reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
+      // Calculate material total from GRN line items
+      const material = (materialRes.data || []).reduce((sum, invoice: any) => {
+        const lineItemTotal = (invoice.grn_line_items || []).reduce(
+          (itemSum: number, item: any) => itemSum + (parseFloat(item.amount_with_gst) || 0), 0
+        )
+        return sum + lineItemTotal
+      }, 0)
       const manpower = (manpowerRes.data || []).reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
       const equipment = (equipmentRes.data || []).reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
       const other = (otherRes.data || []).reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)

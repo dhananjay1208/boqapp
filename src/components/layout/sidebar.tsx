@@ -71,7 +71,8 @@ const masterDataGroup: NavGroup = {
   items: [
     { name: 'Workstations', href: '/master-data/workstations', icon: Wrench },
     { name: 'Material List', href: '/master-data/materials', icon: ListTree },
-    { name: 'Equipment', href: '/master-data/equipment', icon: Truck },
+    { name: 'Equipment Types', href: '/master-data/equipment-types', icon: Truck },
+    { name: 'Equipment Rates', href: '/master-data/equipment', icon: Truck },
     { name: 'Labour Contractors', href: '/master-data/labour-contractors', icon: HardHat },
     { name: 'Manpower Categories', href: '/master-data/manpower-categories', icon: Tag },
     { name: 'Manpower Rates', href: '/master-data/manpower', icon: Users },
