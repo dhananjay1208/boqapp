@@ -10,6 +10,7 @@ A construction project management application for tracking BOQ (Bill of Quantiti
 - **Storage**: Supabase Storage (for document uploads)
 - **Icons**: Lucide React
 - **Excel**: xlsx library for import/export
+- **PDF**: jsPDF with jspdf-autotable for PDF generation
 - **Charts**: Recharts
 - **Forms**: React Hook Form
 - **Notifications**: Sonner (toast)
@@ -32,6 +33,7 @@ app/
 │   │   ├── supplier-invoices/  # Supplier invoice payments
 │   │   ├── checklists/         # Checklist management
 │   │   ├── reports/            # Reports
+│   │   │   └── mir/            # MIR Reports (PDF generation)
 │   │   └── master-data/        # Master data
 │   │       ├── workstations/   # Workstation types
 │   │       ├── materials/      # Material master list
@@ -73,9 +75,18 @@ app/
 ### 3. Material GRN (`/material-grn`)
 - Invoice-based goods receipt notes
 - Multiple materials per invoice
-- Document uploads (DC, MIR, Test Certificate, TDS)
+- **Invoice Date** and **GRN Date** tracking (separate fields)
+- Document uploads:
+  - **Invoice level**: DC (Delivery Challan)
+  - **Line item level**: Test Certificate, TDS (MIR removed)
 - Supplier selection from master data
 - GST calculation (5%, 12%, 18%)
+- **Export Reports**:
+  - **Export Report**: Standard GRN report with all details
+  - **MIR Overview**: Excel export with materials grouped by GRN date
+    - MIR references (MIR 1, MIR 2, etc.) based on unique GRN dates
+    - Quantity distribution across dates
+    - Compliance status (Y/N/NA) for DC, Test Cert, TDS
 
 ### 4. Inventory (`/inventory`)
 - Aggregated material stock from GRN entries
@@ -117,7 +128,19 @@ app/
 - Activity checklists per BOQ headline
 - Status tracking (pending, in_progress, completed)
 
-### 9. Workstation Management (`/workstations`)
+### 9. Reports (`/reports`)
+Reports module with expandable submenu:
+- **Overview** (`/reports`): General reports dashboard (under construction)
+- **MIR Reports** (`/reports/mir`): Individual Material Inspection Reports
+  - Site selector dropdown
+  - MIR selector dropdown (format: "MIR 1 - 22 Jan 2026")
+  - Preview table showing materials for selected MIR
+  - PDF download with:
+    - Header: Site name, MIR reference, date
+    - Table: S.No, Material, Qty, Unit, DC, Test Cert, TDS
+    - Footer: Signature sections (Prepared by / Approved by)
+
+### 10. Workstation Management (`/workstations`)
 - Track work progress at physical workstations (HT ROOM, ELE ROOM, FENCING, etc.)
 - **Primary source for material consumption** - consumption recorded here appears in BOQ Management
 - Features:
@@ -140,7 +163,7 @@ app/
   - 29 predefined workstations seeded
   - Add/Edit/Delete workstation types
 
-### 10. Master Data (`/master-data/*`)
+### 11. Master Data (`/master-data/*`)
 - **Workstations** (`/master-data/workstations`): Workstation name, description
 - **Materials** (`/master-data/materials`): Category, name, unit, HSN code
 - **Suppliers** (`/master-data/suppliers`): Name, GSTIN, address, contact
@@ -164,13 +187,15 @@ app/
 - `materials` - Materials per line item
 
 ### GRN Tables (Invoice-based)
-- `grn_invoices` - GRN invoice headers (site_id, supplier_id, invoice_number, grn_date)
+- `grn_invoices` - GRN invoice headers
+  - site_id, supplier_id, invoice_number
+  - invoice_date (actual invoice date), grn_date (GRN receipt date)
 - `grn_line_items` - Materials per invoice
   - material_id, material_name, quantity, unit, rate, gst_rate
   - amount_without_gst, amount_with_gst (stored values, not computed)
   - Note: Amounts are stored directly from Excel to preserve discounts
 - `grn_invoice_dc` - Delivery challan documents (invoice-level)
-- `grn_line_item_documents` - MIR, Test Cert, TDS per material
+- `grn_line_item_documents` - Test Cert, TDS per material (MIR removed from UI)
 
 ### Master Data Tables
 - `master_materials` - Material master list
@@ -338,15 +363,63 @@ function exportToExcel() {
 }
 ```
 
+### PDF Generation
+```typescript
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
+
+function generatePDF() {
+  const doc = new jsPDF()
+
+  // Title
+  doc.setFontSize(16)
+  doc.setFont('helvetica', 'bold')
+  doc.text('Report Title', 105, 20, { align: 'center' })
+
+  // Subtitle/Info
+  doc.setFontSize(11)
+  doc.setFont('helvetica', 'normal')
+  doc.text('Site: Site Name', 14, 35)
+
+  // Table with autoTable
+  autoTable(doc, {
+    startY: 50,
+    head: [['S.No', 'Description', 'Value']],
+    body: [
+      [1, 'Item 1', '100'],
+      [2, 'Item 2', '200'],
+    ],
+    headStyles: { fillColor: [51, 65, 85] }, // slate-700
+    columnStyles: {
+      0: { cellWidth: 20, halign: 'center' },
+      1: { cellWidth: 100 },
+      2: { cellWidth: 30, halign: 'right' },
+    }
+  })
+
+  // Get final Y position after table
+  const finalY = (doc as any).lastAutoTable.finalY + 20
+
+  // Signature section
+  doc.text('Prepared by: _______________', 14, finalY)
+  doc.text('Approved by: _______________', 120, finalY)
+
+  doc.save('report.pdf')
+}
+```
+
 ## Navigation
 Navigation items are defined in:
 - `src/components/layout/sidebar.tsx` - Desktop sidebar
 - `src/components/layout/mobile-nav.tsx` - Mobile navigation
 
 Main navigation items:
-- Dashboard, Sites, BOQ Management, BOQ Progress, Workstations, Material GRN, Inventory, Expenses Recording, Expense Dashboard, Supplier Invoices, Checklists, Reports
+- Dashboard, Sites, BOQ Management, BOQ Progress, Workstations, Material GRN, Inventory, Expenses Recording, Expense Dashboard, Supplier Invoices, Checklists
 
-Master Data submenu items:
+Reports submenu items (expandable group):
+- Overview, MIR Reports
+
+Master Data submenu items (expandable group):
 - Workstations, Material List, Equipment, Labour Contractors, Manpower Categories, Manpower Rates, Suppliers
 
 To add a new page:
@@ -372,6 +445,7 @@ Key migrations:
 - `019_labour_contractors_and_categories.sql` - Labour contractors and categories tables
 - `020_workstation_management.sql` - Workstation tables and 29 predefined workstations
 - `021_grn_line_items_fix.sql` - Convert GRN amount columns from computed to stored values
+- `022_grn_invoice_date.sql` - Add invoice_date column to grn_invoices
 
 ## Import/Utility Scripts
 
