@@ -123,10 +123,14 @@ app/
 
 ### 6. Expense Dashboard (`/expense-dashboard`)
 - Charts and analytics for expenses
+- **Data Sources**:
+  - **Material**: Fetched from `grn_invoices` + `grn_line_items` (using `grn_date`)
+  - **Manpower/Equipment/Other**: Fetched from respective expense tables
 - **Date range filtering**:
-  - Preset options: This Month, Last Month, This Year, Last Year
+  - Preset options: Last 7/14/30/60/90 Days
   - **Custom date range**: From/To date selection for any period
 - Category-wise breakdown (Material, Manpower, Equipment, Other)
+- Last 7 days bar chart with daily totals
 
 ### 7. Supplier Invoices (`/supplier-invoices`)
 - Consolidated view of supplier invoices from GRN
