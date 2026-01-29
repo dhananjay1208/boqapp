@@ -201,6 +201,9 @@ export default function BOQDetailPage() {
   const [workstationConsumptions, setWorkstationConsumptions] = useState<WorkstationConsumption[]>([])
   const [expandedConsumptions, setExpandedConsumptions] = useState<Set<string>>(new Set())
 
+  // Progress State - Upto Date quantities from workstation progress entries
+  const [progressByLineItem, setProgressByLineItem] = useState<Record<string, number>>({})
+
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
@@ -310,6 +313,24 @@ export default function BOQDetailPage() {
             )
 
           setWorkstationConsumptions(transformedConsumptions)
+        }
+
+        // Fetch workstation progress (for Upto Date quantity calculation)
+        const { data: progressData, error: progressError } = await supabase
+          .from('workstation_boq_progress')
+          .select('boq_line_item_id, quantity')
+          .in('boq_line_item_id', lineItemIds)
+
+        if (progressError) {
+          console.error('Error fetching progress data:', progressError)
+        } else {
+          // Aggregate quantities by line item (sum across all workstations)
+          const progressMap: Record<string, number> = {}
+          progressData?.forEach(entry => {
+            const lineItemId = entry.boq_line_item_id
+            progressMap[lineItemId] = (progressMap[lineItemId] || 0) + (entry.quantity || 0)
+          })
+          setProgressByLineItem(progressMap)
         }
       }
     } catch (error) {
@@ -642,6 +663,21 @@ export default function BOQDetailPage() {
     return workstationConsumptions.filter(c => c.line_item_id === lineItemId)
   }
 
+  function getLineItemProgress(lineItemId: string, boqQty: number) {
+    const uptodateQty = progressByLineItem[lineItemId] || 0
+    const remaining = Math.max(0, boqQty - uptodateQty)
+    const percentage = boqQty > 0 ? Math.min(100, (uptodateQty / boqQty) * 100) : 0
+    const isOverExecuted = uptodateQty > boqQty
+    return { uptodateQty, remaining, percentage, isOverExecuted }
+  }
+
+  function getProgressBarColor(percentage: number, isOverExecuted: boolean) {
+    if (isOverExecuted) return 'bg-blue-500'
+    if (percentage >= 75) return 'bg-green-500'
+    if (percentage >= 25) return 'bg-amber-500'
+    return 'bg-red-500'
+  }
+
   async function updateLineItemStatus(lineItemId: string, field: 'checklist_status' | 'jmr_status', value: string) {
     try {
       const { error } = await supabase
@@ -809,6 +845,7 @@ export default function BOQDetailPage() {
                 ) : (
                   lineItems.map((lineItem) => {
                     const lineItemConsumptions = getConsumptionsForLineItem(lineItem.id)
+                    const progress = getLineItemProgress(lineItem.id, lineItem.quantity)
                     return (
                     <div key={lineItem.id} className="border rounded-lg bg-slate-50">
                       <div className="p-4">
@@ -816,18 +853,58 @@ export default function BOQDetailPage() {
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2 mb-1">
                               <span className="font-mono font-medium text-blue-600">{lineItem.item_number}</span>
-                            </div>
-                            <p className="text-sm text-slate-700 mb-2">
-                              {lineItem.description}
-                            </p>
-                            <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
-                              <span className="font-medium">{lineItem.quantity} {lineItem.unit}</span>
                               {lineItem.location && (
-                                <span className="flex items-center gap-1">
+                                <span className="flex items-center gap-1 text-xs text-slate-500">
                                   <Building2 className="h-3 w-3" />
                                   {lineItem.location}
                                 </span>
                               )}
+                            </div>
+                            <p className="text-sm text-slate-700 mb-3">
+                              {lineItem.description}
+                            </p>
+
+                            {/* Progress Summary */}
+                            <div className="bg-white border rounded-lg p-3 mb-3">
+                              <div className="grid grid-cols-3 gap-4 text-center mb-2">
+                                <div>
+                                  <p className="text-xs text-slate-500 mb-1">BOQ Qty</p>
+                                  <p className="font-semibold text-slate-900">
+                                    {lineItem.quantity.toLocaleString('en-IN', { maximumFractionDigits: 3 })} <span className="text-xs font-normal text-slate-500">{lineItem.unit}</span>
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-slate-500 mb-1">Upto Date</p>
+                                  <p className={`font-semibold ${progress.isOverExecuted ? 'text-blue-600' : 'text-green-600'}`}>
+                                    {progress.uptodateQty.toLocaleString('en-IN', { maximumFractionDigits: 3 })} <span className="text-xs font-normal text-slate-500">{lineItem.unit}</span>
+                                  </p>
+                                </div>
+                                <div>
+                                  <p className="text-xs text-slate-500 mb-1">Remaining</p>
+                                  <p className={`font-semibold ${progress.remaining > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                                    {progress.remaining.toLocaleString('en-IN', { maximumFractionDigits: 3 })} <span className="text-xs font-normal text-slate-500">{lineItem.unit}</span>
+                                  </p>
+                                </div>
+                              </div>
+                              {/* Progress Bar */}
+                              <div className="flex items-center gap-2">
+                                <div className="flex-1 bg-slate-200 rounded-full h-2 overflow-hidden">
+                                  <div
+                                    className={`h-2 rounded-full transition-all ${getProgressBarColor(progress.percentage, progress.isOverExecuted)}`}
+                                    style={{ width: `${Math.min(100, progress.percentage)}%` }}
+                                  />
+                                </div>
+                                <span className={`text-xs font-medium min-w-[40px] text-right ${
+                                  progress.isOverExecuted ? 'text-blue-600' :
+                                  progress.percentage >= 75 ? 'text-green-600' :
+                                  progress.percentage >= 25 ? 'text-amber-600' : 'text-red-600'
+                                }`}>
+                                  {progress.percentage.toFixed(0)}%
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-3 text-sm text-slate-500">
                               {lineItemConsumptions.length > 0 && (
                                 <Badge variant="secondary" className="text-xs">
                                   <Wrench className="h-3 w-3 mr-1" />
