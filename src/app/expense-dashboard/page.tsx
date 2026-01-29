@@ -159,13 +159,18 @@ export default function ExpenseDashboardPage() {
     }
 
     try {
-      const [materialRes, manpowerRes, equipmentRes, otherRes] = await Promise.all([
+      // Fetch GRN invoices for material expenses (from Material GRN module)
+      const [grnRes, manpowerRes, equipmentRes, otherRes] = await Promise.all([
         supabase
-          .from('expense_material')
-          .select('expense_date, amount')
+          .from('grn_invoices')
+          .select(`
+            id,
+            grn_date,
+            grn_line_items(amount_with_gst)
+          `)
           .eq('site_id', selectedSiteId)
-          .gte('expense_date', startDateStr)
-          .lte('expense_date', endDateStr),
+          .gte('grn_date', startDateStr)
+          .lte('grn_date', endDateStr),
         supabase
           .from('expense_manpower')
           .select('expense_date, amount')
@@ -186,7 +191,20 @@ export default function ExpenseDashboardPage() {
           .lte('expense_date', endDateStr),
       ])
 
-      setMaterialExpenses(materialRes.data || [])
+      // Transform GRN data to material expenses format
+      // Each invoice becomes an expense entry with total amount from line items
+      const materialData = (grnRes.data || []).map((invoice: any) => {
+        const totalAmount = (invoice.grn_line_items || []).reduce(
+          (sum: number, item: any) => sum + (item.amount_with_gst || 0),
+          0
+        )
+        return {
+          expense_date: invoice.grn_date,
+          amount: totalAmount,
+        }
+      })
+
+      setMaterialExpenses(materialData)
       setManpowerExpenses(manpowerRes.data || [])
       setEquipmentExpenses(equipmentRes.data || [])
       setOtherExpenses(otherRes.data || [])
