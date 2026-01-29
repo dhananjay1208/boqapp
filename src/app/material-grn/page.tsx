@@ -389,6 +389,33 @@ export default function MaterialGRNPage() {
 
         if (docsError) console.error('Error fetching line item docs:', docsError)
         lineItemDocs = docsData || []
+
+        // Find line items missing document placeholders and create them
+        const lineItemsWithDocs = new Set(lineItemDocs.map(d => d.grn_line_item_id))
+        const lineItemsMissingDocs = lineItemsData.filter(li => !lineItemsWithDocs.has(li.id))
+
+        if (lineItemsMissingDocs.length > 0) {
+          // Create missing document placeholders
+          const docsToCreate = lineItemsMissingDocs.flatMap(li =>
+            LINE_ITEM_DOC_TYPES.map(docType => ({
+              grn_line_item_id: li.id,
+              document_type: docType.value,
+              is_applicable: true,
+              is_uploaded: false,
+            }))
+          )
+
+          const { data: newDocs, error: insertError } = await supabase
+            .from('grn_line_item_documents')
+            .insert(docsToCreate)
+            .select()
+
+          if (insertError) {
+            console.error('Error creating document placeholders:', insertError)
+          } else if (newDocs) {
+            lineItemDocs = [...lineItemDocs, ...newDocs]
+          }
+        }
       }
 
       // Assemble invoices with all related data
