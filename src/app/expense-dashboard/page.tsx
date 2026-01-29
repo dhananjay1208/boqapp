@@ -48,7 +48,8 @@ import {
   Line,
   LabelList,
 } from 'recharts'
-import { format, subDays, startOfDay, eachDayOfInterval, parseISO } from 'date-fns'
+import { format, subDays, startOfDay, eachDayOfInterval, parseISO, differenceInDays } from 'date-fns'
+import { Input } from '@/components/ui/input'
 
 interface Site {
   id: string
@@ -84,6 +85,7 @@ const DATE_RANGES = [
   { value: '30', label: 'Last 30 Days' },
   { value: '60', label: 'Last 60 Days' },
   { value: '90', label: 'Last 90 Days' },
+  { value: 'custom', label: 'Custom Range' },
 ]
 
 export default function ExpenseDashboardPage() {
@@ -91,6 +93,8 @@ export default function ExpenseDashboardPage() {
   const [selectedSiteId, setSelectedSiteId] = useState<string>('')
   const [selectedSiteName, setSelectedSiteName] = useState<string>('')
   const [dateRange, setDateRange] = useState<string>('30')
+  const [customFromDate, setCustomFromDate] = useState<string>(format(subDays(new Date(), 30), 'yyyy-MM-dd'))
+  const [customToDate, setCustomToDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'))
   const [loading, setLoading] = useState(true)
   const [loadingData, setLoadingData] = useState(false)
 
@@ -106,9 +110,16 @@ export default function ExpenseDashboardPage() {
 
   useEffect(() => {
     if (selectedSiteId) {
-      fetchExpenseData()
+      // For custom range, only fetch when both dates are valid
+      if (dateRange === 'custom') {
+        if (customFromDate && customToDate) {
+          fetchExpenseData()
+        }
+      } else {
+        fetchExpenseData()
+      }
     }
-  }, [selectedSiteId, dateRange])
+  }, [selectedSiteId, dateRange, customFromDate, customToDate])
 
   async function fetchSites() {
     try {
@@ -134,10 +145,18 @@ export default function ExpenseDashboardPage() {
 
   async function fetchExpenseData() {
     setLoadingData(true)
-    const endDate = new Date()
-    const startDate = subDays(endDate, parseInt(dateRange))
-    const startDateStr = format(startDate, 'yyyy-MM-dd')
-    const endDateStr = format(endDate, 'yyyy-MM-dd')
+    let startDateStr: string
+    let endDateStr: string
+
+    if (dateRange === 'custom') {
+      startDateStr = customFromDate
+      endDateStr = customToDate
+    } else {
+      const endDate = new Date()
+      const startDate = subDays(endDate, parseInt(dateRange))
+      startDateStr = format(startDate, 'yyyy-MM-dd')
+      endDateStr = format(endDate, 'yyyy-MM-dd')
+    }
 
     try {
       const [materialRes, manpowerRes, equipmentRes, otherRes] = await Promise.all([
@@ -181,8 +200,17 @@ export default function ExpenseDashboardPage() {
 
   // Calculate daily data for charts
   const dailyData = useMemo(() => {
-    const endDate = new Date()
-    const startDate = subDays(endDate, parseInt(dateRange))
+    let startDate: Date
+    let endDate: Date
+
+    if (dateRange === 'custom') {
+      startDate = parseISO(customFromDate)
+      endDate = parseISO(customToDate)
+    } else {
+      endDate = new Date()
+      startDate = subDays(endDate, parseInt(dateRange))
+    }
+
     const days = eachDayOfInterval({ start: startDate, end: endDate })
 
     const aggregated: { [key: string]: DailyExpense } = {}
@@ -234,7 +262,7 @@ export default function ExpenseDashboardPage() {
     })
 
     return Object.values(aggregated).sort((a, b) => a.date.localeCompare(b.date))
-  }, [materialExpenses, manpowerExpenses, equipmentExpenses, otherExpenses, dateRange])
+  }, [materialExpenses, manpowerExpenses, equipmentExpenses, otherExpenses, dateRange, customFromDate, customToDate])
 
   // Calculate category totals
   const categoryTotals = useMemo(() => {
@@ -404,6 +432,31 @@ export default function ExpenseDashboardPage() {
                     </SelectContent>
                   </Select>
                 </div>
+                {dateRange === 'custom' && (
+                  <>
+                    <div>
+                      <label className="text-xs text-slate-500 mb-1 block">From</label>
+                      <Input
+                        type="date"
+                        value={customFromDate}
+                        onChange={(e) => setCustomFromDate(e.target.value)}
+                        className="w-full sm:w-[160px]"
+                        max={customToDate}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-slate-500 mb-1 block">To</label>
+                      <Input
+                        type="date"
+                        value={customToDate}
+                        onChange={(e) => setCustomToDate(e.target.value)}
+                        className="w-full sm:w-[160px]"
+                        min={customFromDate}
+                        max={format(new Date(), 'yyyy-MM-dd')}
+                      />
+                    </div>
+                  </>
+                )}
               </div>
               {selectedSiteName && (
                 <div className="text-right">
@@ -436,7 +489,11 @@ export default function ExpenseDashboardPage() {
                   <p className="text-2xl md:text-3xl font-bold">
                     {formatCurrency(categoryTotals.total)}
                   </p>
-                  <p className="text-xs text-slate-400 mt-1">Last {dateRange} days</p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    {dateRange === 'custom'
+                      ? `${format(parseISO(customFromDate), 'dd MMM')} - ${format(parseISO(customToDate), 'dd MMM yyyy')}`
+                      : `Last ${dateRange} days`}
+                  </p>
                 </CardContent>
               </Card>
 
@@ -878,7 +935,9 @@ export default function ExpenseDashboardPage() {
                   <div className="p-4 bg-slate-50 rounded-lg">
                     <p className="text-xs text-slate-500 mb-1">Average Daily Expense</p>
                     <p className="text-lg font-bold text-slate-900">
-                      {formatCurrency(categoryTotals.total / parseInt(dateRange))}
+                      {formatCurrency(categoryTotals.total / (dateRange === 'custom'
+                        ? Math.max(1, differenceInDays(parseISO(customToDate), parseISO(customFromDate)) + 1)
+                        : parseInt(dateRange)))}
                     </p>
                   </div>
                   <div className="p-4 bg-slate-50 rounded-lg">

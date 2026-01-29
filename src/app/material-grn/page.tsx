@@ -911,9 +911,42 @@ export default function MaterialGRNPage() {
   }
 
   // Line item document functions
-  function openLineItemDocsDialog(invoice: GRNInvoice, lineItem: GRNLineItem) {
+  async function openLineItemDocsDialog(invoice: GRNInvoice, lineItem: GRNLineItem) {
     setSelectedLineItemInvoice(invoice)
-    setSelectedLineItem(lineItem)
+
+    // Check if documents exist for this line item, create them if not
+    if (lineItem.documents.length === 0) {
+      try {
+        // Create missing document placeholders
+        const docs = LINE_ITEM_DOC_TYPES.map(docType => ({
+          grn_line_item_id: lineItem.id,
+          document_type: docType.value,
+          is_applicable: true,
+          is_uploaded: false,
+        }))
+
+        const { data: newDocs, error } = await supabase
+          .from('grn_line_item_documents')
+          .insert(docs)
+          .select()
+
+        if (error) throw error
+
+        // Update the line item with newly created documents
+        const updatedLineItem = { ...lineItem, documents: newDocs || [] }
+        setSelectedLineItem(updatedLineItem)
+
+        // Refresh the invoice list to include new documents
+        fetchInvoiceList()
+      } catch (error) {
+        console.error('Error creating document placeholders:', error)
+        toast.error('Failed to initialize documents')
+        setSelectedLineItem(lineItem)
+      }
+    } else {
+      setSelectedLineItem(lineItem)
+    }
+
     setLineItemDocsDialogOpen(true)
   }
 
@@ -1123,15 +1156,8 @@ export default function MaterialGRNPage() {
     let completed = 0
     let na = 0
 
-    // DC document
-    if (invoice.dc) {
-      if (!invoice.dc.is_applicable) {
-        na++
-      } else {
-        total++
-        if (invoice.dc.is_uploaded) completed++
-      }
-    }
+    // NOTE: DC is NOT counted here - it's shown separately at invoice level
+    // Only count line item documents (Test Cert, TDS per material)
 
     // Line item documents - only count valid document types (excludes MIR)
     const validDocTypes: string[] = LINE_ITEM_DOC_TYPES.map(dt => dt.value)
@@ -1216,12 +1242,24 @@ export default function MaterialGRNPage() {
     return groups
   }
 
-  // Get total compliance status for a group of invoices
+  // Get total compliance status for a group of invoices (invoice level - includes DC)
   function getGroupComplianceStatus(invoices: GRNInvoice[]) {
     let total = 0
     let completed = 0
     let na = 0
 
+    // Add DC from first invoice (DC is at invoice level, shared across all GRNs)
+    const firstInvoice = invoices[0]
+    if (firstInvoice?.dc) {
+      if (!firstInvoice.dc.is_applicable) {
+        na++
+      } else {
+        total++
+        if (firstInvoice.dc.is_uploaded) completed++
+      }
+    }
+
+    // Add line item documents from all GRNs
     invoices.forEach(invoice => {
       const status = getInvoiceComplianceStatus(invoice)
       total += status.total
