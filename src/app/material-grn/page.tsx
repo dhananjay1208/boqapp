@@ -57,6 +57,7 @@ import {
   Search,
   Loader2,
   FileText,
+  FileSpreadsheet,
   Upload,
   Eye,
   ChevronDown,
@@ -138,6 +139,7 @@ interface GRNInvoice {
   site_id: string
   supplier_id: string
   invoice_number: string
+  invoice_date: string | null
   grn_date: string
   notes: string | null
   created_at: string
@@ -193,7 +195,6 @@ const GST_RATES = [
 ]
 
 const LINE_ITEM_DOC_TYPES = [
-  { value: 'mir', label: 'MIR', fullName: 'Material Inspection Report' },
   { value: 'test_certificate', label: 'Test Cert', fullName: 'Test Certificate' },
   { value: 'tds', label: 'TDS', fullName: 'Technical Data Sheet' },
 ] as const
@@ -259,6 +260,7 @@ export default function MaterialGRNPage() {
     supplier_id: '',
     supplier_name: '',
     invoice_number: '',
+    invoice_date: new Date().toISOString().split('T')[0],
     grn_date: new Date().toISOString().split('T')[0],
     notes: '',
     dc_applicable: true,
@@ -401,6 +403,7 @@ export default function MaterialGRNPage() {
 
         return {
           ...inv,
+          invoice_date: inv.invoice_date || inv.grn_date,  // Fallback to grn_date if invoice_date not set
           supplier: inv.suppliers,
           dc,
           line_items: items,
@@ -455,6 +458,7 @@ export default function MaterialGRNPage() {
       supplier_id: '',
       supplier_name: '',
       invoice_number: '',
+      invoice_date: new Date().toISOString().split('T')[0],
       grn_date: new Date().toISOString().split('T')[0],
       notes: '',
       dc_applicable: true,
@@ -469,6 +473,7 @@ export default function MaterialGRNPage() {
       supplier_id: invoice.supplier_id,
       supplier_name: invoice.supplier?.supplier_name || '',
       invoice_number: invoice.invoice_number,
+      invoice_date: invoice.invoice_date || invoice.grn_date,
       grn_date: invoice.grn_date,
       notes: invoice.notes || '',
       dc_applicable: invoice.dc?.is_applicable ?? true,
@@ -621,6 +626,7 @@ export default function MaterialGRNPage() {
           .update({
             supplier_id: invoiceForm.supplier_id,
             invoice_number: invoiceForm.invoice_number.trim(),
+            invoice_date: invoiceForm.invoice_date,
             grn_date: invoiceForm.grn_date,
             notes: invoiceForm.notes.trim() || null,
           })
@@ -683,6 +689,7 @@ export default function MaterialGRNPage() {
             site_id: selectedSiteId,
             supplier_id: invoiceForm.supplier_id,
             invoice_number: invoiceForm.invoice_number.trim(),
+            invoice_date: invoiceForm.invoice_date,
             grn_date: invoiceForm.grn_date,
             notes: invoiceForm.notes.trim() || null,
           })
@@ -1126,25 +1133,32 @@ export default function MaterialGRNPage() {
       }
     }
 
-    // Line item documents
+    // Line item documents - only count valid document types (excludes MIR)
+    const validDocTypes: string[] = LINE_ITEM_DOC_TYPES.map(dt => dt.value)
     invoice.line_items.forEach(li => {
-      li.documents.forEach(doc => {
-        if (!doc.is_applicable) {
-          na++
-        } else {
-          total++
-          if (doc.is_uploaded) completed++
-        }
-      })
+      li.documents
+        .filter(doc => validDocTypes.includes(doc.document_type))
+        .forEach(doc => {
+          if (!doc.is_applicable) {
+            na++
+          } else {
+            total++
+            if (doc.is_uploaded) completed++
+          }
+        })
     })
 
     return { total, completed, na }
   }
 
   function getLineItemComplianceStatus(lineItem: GRNLineItem) {
-    const applicable = lineItem.documents.filter(d => d.is_applicable)
-    const uploaded = lineItem.documents.filter(d => d.is_applicable && d.is_uploaded)
-    const na = lineItem.documents.filter(d => !d.is_applicable)
+    // Only count documents that are in the current valid document types (excludes MIR)
+    const validDocTypes: string[] = LINE_ITEM_DOC_TYPES.map(dt => dt.value)
+    const validDocs = lineItem.documents.filter(d => validDocTypes.includes(d.document_type))
+
+    const applicable = validDocs.filter(d => d.is_applicable)
+    const uploaded = validDocs.filter(d => d.is_applicable && d.is_uploaded)
+    const na = validDocs.filter(d => !d.is_applicable)
 
     return {
       total: applicable.length,
@@ -1221,7 +1235,7 @@ export default function MaterialGRNPage() {
   // Get total amount for a group of invoices
   function getGroupTotal(invoices: GRNInvoice[]) {
     return invoices.reduce((sum, invoice) => {
-      return sum + invoice.line_items.reduce((lineSum, li) => lineSum + li.amount_with_gst, 0)
+      return sum + invoice.line_items.reduce((lineSum, li) => lineSum + (li.amount_with_gst || 0), 0)
     }, 0)
   }
 
@@ -1338,6 +1352,135 @@ export default function MaterialGRNPage() {
     toast.success('Report exported successfully')
   }
 
+  // Export MIR Overview function
+  function exportMIROverview() {
+    if (invoiceList.length === 0) {
+      toast.error('No invoice data to export')
+      return
+    }
+
+    const siteName = sites.find(s => s.id === selectedSiteId)?.name || 'Unknown Site'
+
+    // Collect all unique GRN dates and sort them
+    const uniqueDates = [...new Set(invoiceList.map(inv => inv.grn_date))].sort()
+
+    // Create MIR reference mapping (MIR 1, MIR 2, etc.)
+    const mirReferences = uniqueDates.map((_, idx) => `MIR ${idx + 1}`)
+
+    // Format dates for display (DD-MMM-YYYY)
+    const formattedDates = uniqueDates.map(date => {
+      const d = new Date(date)
+      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+      return `${d.getDate().toString().padStart(2, '0')}-${months[d.getMonth()]}-${d.getFullYear()}`
+    })
+
+    // Build the worksheet data as array of arrays
+    const wsData: any[][] = []
+
+    // Row 0: MIR references (blank for first 5 columns, then MIR 1, MIR 2, etc., then blank for compliance)
+    const row0 = ['', '', '', '', '']
+    mirReferences.forEach(mir => row0.push(mir))
+    row0.push('', '', '') // DC, Test Cert, TDS columns
+    wsData.push(row0)
+
+    // Row 1: Headers
+    const row1 = ['Invoice no.', 'Date', 'Description', 'Qty', 'Unit']
+    formattedDates.forEach(date => row1.push(date))
+    row1.push('DC', 'TEST CERTIFICATE', 'TDS')
+    wsData.push(row1)
+
+    // Create a map of date to column index
+    const dateColumnMap = new Map<string, number>()
+    uniqueDates.forEach((date, idx) => {
+      dateColumnMap.set(date, 5 + idx) // Starting at column index 5 (after Invoice, Date, Description, Qty, Unit)
+    })
+
+    // Data rows - grouped by invoice
+    invoiceList.forEach(invoice => {
+      const invoiceDate = invoice.invoice_date || invoice.grn_date
+      const formattedInvoiceDate = new Date(invoiceDate).toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric'
+      })
+
+      invoice.line_items.forEach((lineItem, itemIdx) => {
+        const row: any[] = []
+
+        // Invoice number (only on first item of each invoice)
+        row.push(itemIdx === 0 ? invoice.invoice_number : '')
+
+        // Date (only on first item of each invoice)
+        row.push(itemIdx === 0 ? formattedInvoiceDate : '')
+
+        // Description
+        row.push(lineItem.material_name)
+
+        // Total Qty
+        row.push(lineItem.quantity)
+
+        // Unit
+        row.push(lineItem.unit)
+
+        // Quantity columns for each date (filled only for the matching GRN date)
+        uniqueDates.forEach(date => {
+          if (date === invoice.grn_date) {
+            row.push(lineItem.quantity)
+          } else {
+            row.push('')
+          }
+        })
+
+        // Compliance status
+        const dcStatus = invoice.dc
+          ? (invoice.dc.is_applicable ? (invoice.dc.is_uploaded ? 'Y' : 'N') : 'NA')
+          : 'N'
+
+        const testDoc = lineItem.documents.find(d => d.document_type === 'test_certificate')
+        const tdsDoc = lineItem.documents.find(d => d.document_type === 'tds')
+
+        const testStatus = testDoc ? (testDoc.is_applicable ? (testDoc.is_uploaded ? 'Y' : 'N') : 'NA') : 'N'
+        const tdsStatus = tdsDoc ? (tdsDoc.is_applicable ? (tdsDoc.is_uploaded ? 'Y' : 'N') : 'NA') : 'N'
+
+        // DC only on first item of each invoice
+        row.push(itemIdx === 0 ? dcStatus : '')
+        row.push(testStatus)
+        row.push(tdsStatus)
+
+        wsData.push(row)
+      })
+    })
+
+    // Create workbook and worksheet
+    const wb = XLSX.utils.book_new()
+    const ws = XLSX.utils.aoa_to_sheet(wsData)
+
+    // Set column widths
+    const colWidths = [
+      { wch: 15 },  // Invoice no.
+      { wch: 12 },  // Date
+      { wch: 35 },  // Description
+      { wch: 10 },  // Qty
+      { wch: 8 },   // Unit
+    ]
+    // Date columns
+    uniqueDates.forEach(() => colWidths.push({ wch: 12 }))
+    // Compliance columns
+    colWidths.push({ wch: 6 })   // DC
+    colWidths.push({ wch: 16 })  // TEST CERTIFICATE
+    colWidths.push({ wch: 6 })   // TDS
+
+    ws['!cols'] = colWidths
+
+    XLSX.utils.book_append_sheet(wb, ws, 'MIR Overview')
+
+    const dateStr = new Date().toISOString().split('T')[0]
+    const filename = `MIR_Overview_${siteName.replace(/[^a-zA-Z0-9]/g, '_')}_${dateStr}.xlsx`
+
+    XLSX.writeFile(wb, filename)
+    toast.success('MIR Overview exported successfully')
+  }
+
   // Filter materials for search
   const filteredMaterials = masterMaterials.filter(m =>
     m.name.toLowerCase().includes(materialSearchTerm.toLowerCase()) ||
@@ -1417,6 +1560,15 @@ export default function MaterialGRNPage() {
                 >
                   <Download className="h-4 w-4 mr-2" />
                   Export Report
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={exportMIROverview}
+                  disabled={!selectedSiteId || invoiceList.length === 0}
+                  className="w-full sm:w-auto"
+                >
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                  MIR Overview
                 </Button>
                 <Button onClick={openCreateDialog} disabled={!selectedSiteId} className="w-full sm:w-auto">
                   <Plus className="h-4 w-4 mr-2" />
@@ -1554,7 +1706,7 @@ export default function MaterialGRNPage() {
                               {invoices.map((invoice) => {
                                 const compliance = getInvoiceComplianceStatus(invoice)
                                 const isComplete = compliance.completed === compliance.total && compliance.total > 0
-                                const invoiceTotal = invoice.line_items.reduce((sum, li) => sum + li.amount_with_gst, 0)
+                                const invoiceTotal = invoice.line_items.reduce((sum, li) => sum + (li.amount_with_gst || 0), 0)
 
                                 return (
                                   <div key={invoice.id} className="border rounded-lg overflow-hidden">
@@ -1622,10 +1774,10 @@ export default function MaterialGRNPage() {
                                               </h4>
                                               <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 mt-1">
                                                 <span>{lineItem.quantity} {lineItem.unit}</span>
-                                                <span>@ ₹{lineItem.rate.toLocaleString('en-IN')}</span>
+                                                <span>@ ₹{(lineItem.rate || 0).toLocaleString('en-IN')}</span>
                                                 <span>GST: {lineItem.gst_rate}%</span>
                                                 <span className="font-medium text-slate-700">
-                                                  ₹{lineItem.amount_with_gst.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                                                  ₹{(lineItem.amount_with_gst || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}
                                                 </span>
                                               </div>
                                             </div>
@@ -1801,82 +1953,81 @@ export default function MaterialGRNPage() {
                 </Popover>
               </div>
 
-              {/* Invoice Number and Date */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Invoice No. *</Label>
-                  <Popover open={invoiceSearchOpen} onOpenChange={setInvoiceSearchOpen}>
-                    <PopoverTrigger asChild>
-                      <Button
-                        variant="outline"
-                        role="combobox"
-                        aria-expanded={invoiceSearchOpen}
-                        className="w-full justify-between font-normal"
-                      >
-                        {invoiceForm.invoice_number || 'Enter or select invoice...'}
-                        <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-[calc(100vw-4rem)] sm:w-[300px] p-0">
-                      <Command>
-                        <CommandInput
-                          placeholder="Type new or search existing..."
-                          value={invoiceSearchTerm}
-                          onValueChange={(value) => {
-                            setInvoiceSearchTerm(value)
-                            setInvoiceForm({ ...invoiceForm, invoice_number: value })
-                          }}
-                        />
-                        <CommandList>
-                          <CommandEmpty>
-                            {invoiceSearchTerm ? (
-                              <div className="p-2 text-sm">
-                                <p className="text-slate-500">New invoice: <strong>{invoiceSearchTerm}</strong></p>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="mt-1 w-full justify-start"
-                                  onClick={() => {
-                                    setInvoiceForm({ ...invoiceForm, invoice_number: invoiceSearchTerm })
-                                    setInvoiceSearchOpen(false)
-                                  }}
+              {/* Invoice Number */}
+              <div className="space-y-2">
+                <Label>Invoice No. *</Label>
+                <Popover open={invoiceSearchOpen} onOpenChange={setInvoiceSearchOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={invoiceSearchOpen}
+                      className="w-full justify-between font-normal"
+                    >
+                      {invoiceForm.invoice_number || 'Enter or select invoice...'}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[calc(100vw-4rem)] sm:w-[300px] p-0">
+                    <Command>
+                      <CommandInput
+                        placeholder="Type new or search existing..."
+                        value={invoiceSearchTerm}
+                        onValueChange={(value) => {
+                          setInvoiceSearchTerm(value)
+                          setInvoiceForm({ ...invoiceForm, invoice_number: value })
+                        }}
+                      />
+                      <CommandList>
+                        <CommandEmpty>
+                          {invoiceSearchTerm ? (
+                            <div className="p-2 text-sm">
+                              <p className="text-slate-500">New invoice: <strong>{invoiceSearchTerm}</strong></p>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="mt-1 w-full justify-start"
+                                onClick={() => {
+                                  setInvoiceForm({ ...invoiceForm, invoice_number: invoiceSearchTerm })
+                                  setInvoiceSearchOpen(false)
+                                }}
+                              >
+                                <Plus className="h-4 w-4 mr-2" />
+                                Use "{invoiceSearchTerm}"
+                              </Button>
+                            </div>
+                          ) : (
+                            <p className="text-slate-500">Type an invoice number</p>
+                          )}
+                        </CommandEmpty>
+                        {existingInvoices.length > 0 && (
+                          <CommandGroup heading="Existing Invoices (for partial delivery)">
+                            {existingInvoices
+                              .filter(inv =>
+                                inv.invoice_number.toLowerCase().includes(invoiceSearchTerm.toLowerCase()) ||
+                                inv.supplier_name.toLowerCase().includes(invoiceSearchTerm.toLowerCase())
+                              )
+                              .map((invoice) => (
+                                <CommandItem
+                                  key={invoice.invoice_number}
+                                  value={invoice.invoice_number}
+                                  onSelect={() => selectExistingInvoice(invoice)}
                                 >
-                                  <Plus className="h-4 w-4 mr-2" />
-                                  Use "{invoiceSearchTerm}"
-                                </Button>
-                              </div>
-                            ) : (
-                              <p className="text-slate-500">Type an invoice number</p>
-                            )}
-                          </CommandEmpty>
-                          {existingInvoices.length > 0 && (
-                            <CommandGroup heading="Existing Invoices (for partial delivery)">
-                              {existingInvoices
-                                .filter(inv =>
-                                  inv.invoice_number.toLowerCase().includes(invoiceSearchTerm.toLowerCase()) ||
-                                  inv.supplier_name.toLowerCase().includes(invoiceSearchTerm.toLowerCase())
-                                )
-                                .map((invoice) => (
-                                  <CommandItem
-                                    key={invoice.invoice_number}
-                                    value={invoice.invoice_number}
-                                    onSelect={() => selectExistingInvoice(invoice)}
-                                  >
-                                    <Check
-                                      className={cn(
-                                        'mr-2 h-4 w-4',
-                                        invoiceForm.invoice_number === invoice.invoice_number ? 'opacity-100' : 'opacity-0'
-                                      )}
-                                    />
-                                    <div className="flex-1">
-                                      <p className="font-medium">{invoice.invoice_number}</p>
-                                      <p className="text-xs text-slate-500">
-                                        {invoice.supplier_name} | {new Date(invoice.grn_date).toLocaleDateString('en-IN')}
-                                      </p>
-                                    </div>
-                                  </CommandItem>
-                                ))}
-                            </CommandGroup>
+                                  <Check
+                                    className={cn(
+                                      'mr-2 h-4 w-4',
+                                      invoiceForm.invoice_number === invoice.invoice_number ? 'opacity-100' : 'opacity-0'
+                                    )}
+                                  />
+                                  <div className="flex-1">
+                                    <p className="font-medium">{invoice.invoice_number}</p>
+                                    <p className="text-xs text-slate-500">
+                                      {invoice.supplier_name} | {new Date(invoice.grn_date).toLocaleDateString('en-IN')}
+                                    </p>
+                                  </div>
+                                </CommandItem>
+                              ))}
+                          </CommandGroup>
                           )}
                         </CommandList>
                       </Command>
@@ -1887,6 +2038,18 @@ export default function MaterialGRNPage() {
                       Adding new GRN entry for existing invoice (partial delivery)
                     </p>
                   )}
+              </div>
+
+              {/* Invoice Date and GRN Date */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="invoice_date">Invoice Date *</Label>
+                  <Input
+                    id="invoice_date"
+                    type="date"
+                    value={invoiceForm.invoice_date}
+                    onChange={(e) => setInvoiceForm({ ...invoiceForm, invoice_date: e.target.value })}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="grn_date">GRN Date *</Label>

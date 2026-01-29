@@ -32,6 +32,8 @@ import {
   HardHat,
   Tag,
   Wrench,
+  FileText,
+  LayoutList,
 } from 'lucide-react'
 
 const navigation = [
@@ -46,7 +48,11 @@ const navigation = [
   { name: 'Expense Dashboard', href: '/expense-dashboard', icon: PieChart },
   { name: 'Supplier Invoices', href: '/supplier-invoices', icon: CreditCard },
   { name: 'Checklists', href: '/checklists', icon: ClipboardCheck },
-  { name: 'Reports', href: '/reports', icon: BarChart3 },
+]
+
+const reportsItems = [
+  { name: 'Overview', href: '/reports', icon: LayoutList },
+  { name: 'MIR Reports', href: '/reports/mir', icon: FileText },
 ]
 
 const masterDataItems = [
@@ -68,6 +74,9 @@ export function MobileNav({ open, onOpenChange }: MobileNavProps) {
   const pathname = usePathname()
   const [masterDataExpanded, setMasterDataExpanded] = useState(
     pathname.startsWith('/master-data')
+  )
+  const [reportsExpanded, setReportsExpanded] = useState(
+    pathname.startsWith('/reports')
   )
 
   return (
@@ -102,6 +111,54 @@ export function MobileNav({ open, onOpenChange }: MobileNavProps) {
               </Link>
             )
           })}
+
+          {/* Reports Group */}
+          <div className="pt-2">
+            <button
+              onClick={() => setReportsExpanded(!reportsExpanded)}
+              className={cn(
+                'flex items-center justify-between w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+                pathname.startsWith('/reports')
+                  ? 'bg-slate-800 text-white'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+              )}
+            >
+              <span className="flex items-center gap-3">
+                <BarChart3 className="h-5 w-5 flex-shrink-0" />
+                Reports
+              </span>
+              {reportsExpanded ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
+              )}
+            </button>
+
+            {reportsExpanded && (
+              <div className="mt-1 ml-4 space-y-1">
+                {reportsItems.map((item) => {
+                  const isActive = pathname === item.href
+
+                  return (
+                    <Link
+                      key={item.name}
+                      href={item.href}
+                      onClick={() => onOpenChange(false)}
+                      className={cn(
+                        'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                        isActive
+                          ? 'bg-blue-600 text-white'
+                          : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                      )}
+                    >
+                      <item.icon className="h-4 w-4 flex-shrink-0" />
+                      {item.name}
+                    </Link>
+                  )
+                })}
+              </div>
+            )}
+          </div>
 
           {/* Master Data Group */}
           <div className="pt-2">

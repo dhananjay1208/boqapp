@@ -244,7 +244,8 @@ async function main() {
         site_id: siteId,
         supplier_id: supplierId,
         invoice_number: inv.invoice_number,
-        grn_date: inv.invoice_date
+        invoice_date: inv.invoice_date,
+        grn_date: inv.invoice_date  // Use invoice date as GRN date for imports
       })
       .select('id')
       .single();

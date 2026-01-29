@@ -26,6 +26,8 @@ import {
   HardHat,
   Tag,
   Wrench,
+  FileText,
+  LayoutList,
 } from 'lucide-react'
 
 interface NavItem {
@@ -52,8 +54,16 @@ const navigation: NavItem[] = [
   { name: 'Expense Dashboard', href: '/expense-dashboard', icon: PieChart },
   { name: 'Supplier Invoices', href: '/supplier-invoices', icon: CreditCard },
   { name: 'Checklists', href: '/checklists', icon: ClipboardCheck },
-  { name: 'Reports', href: '/reports', icon: BarChart3 },
 ]
+
+const reportsGroup: NavGroup = {
+  name: 'Reports',
+  icon: BarChart3,
+  items: [
+    { name: 'Overview', href: '/reports', icon: LayoutList },
+    { name: 'MIR Reports', href: '/reports/mir', icon: FileText },
+  ],
+}
 
 const masterDataGroup: NavGroup = {
   name: 'Master Data',
@@ -77,6 +87,9 @@ export function Sidebar({ className }: SidebarProps) {
   const pathname = usePathname()
   const [masterDataExpanded, setMasterDataExpanded] = useState(
     pathname.startsWith('/master-data')
+  )
+  const [reportsExpanded, setReportsExpanded] = useState(
+    pathname.startsWith('/reports')
   )
 
   return (
@@ -113,6 +126,53 @@ export function Sidebar({ className }: SidebarProps) {
             </Link>
           )
         })}
+
+        {/* Reports Group */}
+        <div className="pt-2">
+          <button
+            onClick={() => setReportsExpanded(!reportsExpanded)}
+            className={cn(
+              'flex items-center justify-between w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+              pathname.startsWith('/reports')
+                ? 'bg-slate-800 text-white'
+                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+            )}
+          >
+            <span className="flex items-center gap-3">
+              <reportsGroup.icon className="h-5 w-5 flex-shrink-0" />
+              {reportsGroup.name}
+            </span>
+            {reportsExpanded ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )}
+          </button>
+
+          {reportsExpanded && (
+            <div className="mt-1 ml-4 space-y-1">
+              {reportsGroup.items.map((item) => {
+                const isActive = pathname === item.href
+
+                return (
+                  <Link
+                    key={item.name}
+                    href={item.href}
+                    className={cn(
+                      'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                      isActive
+                        ? 'bg-blue-600 text-white'
+                        : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                    )}
+                  >
+                    <item.icon className="h-4 w-4 flex-shrink-0" />
+                    {item.name}
+                  </Link>
+                )
+              })}
+            </div>
+          )}
+        </div>
 
         {/* Master Data Group */}
         <div className="pt-2">
