@@ -90,6 +90,10 @@ app/
   - **Line item level**: Test Certificate, TDS (MIR removed)
 - Supplier selection from master data
 - GST calculation (5%, 12%, 18%)
+- **Compliance Tracking**:
+  - Invoice-level: DC document (counted in invoice totals)
+  - Line item-level: Test Cert + TDS per material (2 docs each)
+  - Auto-creates document placeholders for imported data on first access
 - **Export Reports**:
   - **Export Report**: Standard GRN report with all details
   - **MIR Overview**: Excel export with materials grouped by GRN date
@@ -119,8 +123,10 @@ app/
 
 ### 6. Expense Dashboard (`/expense-dashboard`)
 - Charts and analytics for expenses
-- Date range filtering
-- Category-wise breakdown
+- **Date range filtering**:
+  - Preset options: This Month, Last Month, This Year, Last Year
+  - **Custom date range**: From/To date selection for any period
+- Category-wise breakdown (Material, Manpower, Equipment, Other)
 
 ### 7. Supplier Invoices (`/supplier-invoices`)
 - Consolidated view of supplier invoices from GRN
