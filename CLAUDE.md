@@ -517,13 +517,24 @@ node import-grn.js
 - Excel columns: Invoice no., Supplier, Invoice Amount, Date, Material, Qty, Unit, Rate, Amount, Amount with GST
 
 ### `upload-invoices.js`
-Upload invoice PDF documents to Supabase Storage.
+Upload invoice PDF documents to Supabase Storage (TCS-Vizag).
 ```bash
 node upload-invoices.js
 ```
 - Reads PDF files from invoice folder
 - Matches filenames to invoice numbers (handles various formats)
 - Uploads to `compliance-docs` bucket
+- Creates/updates `grn_invoice_dc` records
+
+### `upload-invoices-visakhapatnam.js`
+Upload invoice PDF documents for TCS-Visakhapatnam site.
+```bash
+node upload-invoices-visakhapatnam.js
+```
+- Reads 142 PDFs from `../Invoices/11 Mar Invoices/Consolidated Invoices`
+- Hardcoded site ID `a8ef40c8-18fe-4b7f-a352-4279f4bbd9d1`
+- Normalized matching (strip non-alphanumeric, case-insensitive)
+- Uploads to `compliance-docs` bucket at `grn-invoices/{siteId}/{invoiceId}/{filename}`
 - Creates/updates `grn_invoice_dc` records
 
 ## Development
