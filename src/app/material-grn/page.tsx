@@ -1427,7 +1427,7 @@ export default function MaterialGRNPage() {
     const siteName = sites.find(s => s.id === selectedSiteId)?.name || 'Unknown Site'
 
     // Collect all unique GRN dates and sort them
-    const uniqueDates = [...new Set(invoiceList.map(inv => inv.grn_date))].sort()
+    const uniqueDates = [...new Set(invoiceList.map(inv => inv.grn_date))].sort().reverse()
 
     // Create MIR reference mapping (MIR 1, MIR 2, etc.)
     const mirReferences = uniqueDates.map((_, idx) => `MIR ${idx + 1}`)
@@ -1507,8 +1507,7 @@ export default function MaterialGRNPage() {
         const testStatus = testDoc ? (testDoc.is_applicable ? (testDoc.is_uploaded ? 'Y' : 'N') : 'NA') : 'N'
         const tdsStatus = tdsDoc ? (tdsDoc.is_applicable ? (tdsDoc.is_uploaded ? 'Y' : 'N') : 'NA') : 'N'
 
-        // DC only on first item of each invoice
-        row.push(itemIdx === 0 ? dcStatus : '')
+        row.push(dcStatus)
         row.push(testStatus)
         row.push(tdsStatus)
 
