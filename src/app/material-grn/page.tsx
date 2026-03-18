@@ -1430,7 +1430,7 @@ export default function MaterialGRNPage() {
     const uniqueDates = [...new Set(invoiceList.map(inv => inv.grn_date))].sort().reverse()
 
     // Create MIR reference mapping (MIR 1, MIR 2, etc.)
-    const mirReferences = uniqueDates.map((_, idx) => `MIR ${idx + 1}`)
+    const mirReferences = uniqueDates.map((_, idx) => `MIR ${uniqueDates.length - idx}`)
 
     // Format dates for display (DD-MMM-YYYY)
     const formattedDates = uniqueDates.map(date => {
