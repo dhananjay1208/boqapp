@@ -187,7 +187,7 @@ export default function MIRReportsPage() {
       setInvoiceList(transformedData)
 
       // Build MIR options from unique GRN dates
-      const uniqueDates = [...new Set(transformedData.map((inv: GRNInvoice) => inv.grn_date))].sort()
+      const uniqueDates = [...new Set(transformedData.map((inv: GRNInvoice) => inv.grn_date))].sort().reverse()
       const options: MIROption[] = uniqueDates.map((date, idx) => {
         const d = new Date(date)
         const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
@@ -254,7 +254,7 @@ export default function MIRReportsPage() {
           material: li.material_name,
           qty: li.quantity,
           unit: li.unit,
-          dc: itemIdx === 0 ? dcStatus : 'N' as 'Y' | 'N' | 'NA', // DC only on first item of invoice
+          dc: dcStatus,
           testCert: testStatus,
           tds: tdsStatus
         }
