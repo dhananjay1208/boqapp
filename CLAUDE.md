@@ -97,7 +97,8 @@ app/
 - **Export Reports**:
   - **Export Report**: Standard GRN report with all details
   - **MIR Overview**: Excel export with materials grouped by GRN date
-    - MIR references (MIR 1, MIR 2, etc.) based on unique GRN dates
+    - MIR references (MIR 1, MIR 2, etc.) based on unique GRN dates, ascending by date (MIR 1 = earliest)
+    - Column order is descending (latest date first), but MIR numbers are ascending by date
     - Quantity distribution across dates
     - Compliance status (Y/N/NA) for DC, Test Cert, TDS
 
@@ -156,7 +157,7 @@ Reports module with expandable submenu:
 - **Overview** (`/reports`): General reports dashboard (under construction)
 - **MIR Reports** (`/reports/mir`): Individual Material Inspection Reports
   - Site selector dropdown
-  - MIR selector dropdown (format: "MIR 1 - 22 Jan 2026")
+  - MIR selector dropdown (format: "MIR 1 - 22 Jan 2026"), ascending date order (MIR 1 = earliest date)
   - Preview table showing materials for selected MIR
   - PDF download with:
     - Header: Site name, MIR reference, date
