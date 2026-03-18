@@ -29,6 +29,7 @@ import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import { PDFDocument, rgb } from 'pdf-lib'
 
 interface Site {
   id: string
@@ -111,6 +112,7 @@ export default function MIRReportsPage() {
   const [reportData, setReportData] = useState<MIRReportRow[]>([])
   const [loading, setLoading] = useState(true)
   const [loadingInvoices, setLoadingInvoices] = useState(false)
+  const [generatingPdf, setGeneratingPdf] = useState(false)
 
   // Fetch sites on mount
   useEffect(() => {
@@ -264,78 +266,165 @@ export default function MIRReportsPage() {
     setReportData(rows)
   }
 
-  function generatePDF() {
+  async function generatePDF() {
     const selectedMir = mirOptions.find(m => m.value === selectedMirDate)
     if (!selectedMir) {
       toast.error('Please select a MIR')
       return
     }
 
-    const siteName = sites.find(s => s.id === selectedSiteId)?.name || 'Unknown Site'
+    setGeneratingPdf(true)
 
-    const doc = new jsPDF()
+    try {
+      const siteName = sites.find(s => s.id === selectedSiteId)?.name || 'Unknown Site'
 
-    // Title
-    doc.setFontSize(16)
-    doc.setFont('helvetica', 'bold')
-    doc.text('MATERIAL INSPECTION REPORT', 105, 20, { align: 'center' })
+      const doc = new jsPDF()
 
-    // Site and MIR info
-    doc.setFontSize(11)
-    doc.setFont('helvetica', 'normal')
-    doc.text(`Site: ${siteName}`, 14, 35)
-    doc.text(`MIR Reference: MIR ${selectedMir.mirNumber}`, 14, 42)
-    doc.text(`Date: ${selectedMir.formattedDate}`, 14, 49)
+      // Title
+      doc.setFontSize(16)
+      doc.setFont('helvetica', 'bold')
+      doc.text('MATERIAL INSPECTION REPORT', 105, 20, { align: 'center' })
 
-    // Table
-    autoTable(doc, {
-      startY: 60,
-      head: [['S.No', 'Material', 'Qty', 'Unit', 'DC', 'Test Cert', 'TDS']],
-      body: reportData.map(row => [
-        row.sno,
-        row.material,
-        row.qty,
-        row.unit,
-        row.dc,
-        row.testCert,
-        row.tds
-      ]),
-      headStyles: {
-        fillColor: [51, 65, 85],
-        fontSize: 10,
-        fontStyle: 'bold'
-      },
-      bodyStyles: {
-        fontSize: 9
-      },
-      columnStyles: {
-        0: { cellWidth: 15, halign: 'center' },  // S.No
-        1: { cellWidth: 80 },  // Material
-        2: { cellWidth: 20, halign: 'right' },  // Qty
-        3: { cellWidth: 20, halign: 'center' },  // Unit
-        4: { cellWidth: 15, halign: 'center' },  // DC
-        5: { cellWidth: 20, halign: 'center' },  // Test Cert
-        6: { cellWidth: 15, halign: 'center' },  // TDS
-      },
-      margin: { left: 14, right: 14 }
-    })
+      // Site and MIR info
+      doc.setFontSize(11)
+      doc.setFont('helvetica', 'normal')
+      doc.text(`Site: ${siteName}`, 14, 35)
+      doc.text(`MIR Reference: MIR ${selectedMir.mirNumber}`, 14, 42)
+      doc.text(`Date: ${selectedMir.formattedDate}`, 14, 49)
 
-    // Get the final Y position after the table
-    const finalY = (doc as any).lastAutoTable.finalY + 30
+      // Table
+      autoTable(doc, {
+        startY: 60,
+        head: [['S.No', 'Invoice No.', 'Material', 'Qty', 'Unit', 'DC', 'Test Cert', 'TDS']],
+        body: reportData.map(row => [
+          row.sno,
+          row.invoiceNumber,
+          row.material,
+          row.qty,
+          row.unit,
+          row.dc,
+          row.testCert,
+          row.tds
+        ]),
+        headStyles: {
+          fillColor: [51, 65, 85],
+          fontSize: 10,
+          fontStyle: 'bold'
+        },
+        bodyStyles: {
+          fontSize: 9
+        },
+        columnStyles: {
+          0: { cellWidth: 15, halign: 'center' },  // S.No
+          1: { cellWidth: 25 },  // Invoice No.
+          2: { cellWidth: 55 },  // Material
+          3: { cellWidth: 20, halign: 'right' },  // Qty
+          4: { cellWidth: 20, halign: 'center' },  // Unit
+          5: { cellWidth: 15, halign: 'center' },  // DC
+          6: { cellWidth: 20, halign: 'center' },  // Test Cert
+          7: { cellWidth: 15, halign: 'center' },  // TDS
+        },
+        margin: { left: 14, right: 14 }
+      })
 
-    // Check if we need a new page for signatures
-    if (finalY > 250) {
-      doc.addPage()
-      drawSignatureSection(doc, 40)
-    } else {
-      drawSignatureSection(doc, finalY)
+      // Get the final Y position after the table
+      const finalY = (doc as any).lastAutoTable.finalY + 30
+
+      // Check if we need a new page for signatures
+      if (finalY > 250) {
+        doc.addPage()
+        drawSignatureSection(doc, 40)
+      } else {
+        drawSignatureSection(doc, finalY)
+      }
+
+      // Get report PDF bytes
+      const reportPdfBytes = doc.output('arraybuffer')
+
+      // Collect invoice DC file paths for this MIR date
+      const selectedInvoices = invoiceList.filter(inv => inv.grn_date === selectedMirDate)
+      const invoiceDCs: { invoiceNumber: string; filePath: string }[] = []
+      const seen = new Set<string>()
+
+      for (const inv of selectedInvoices) {
+        if (inv.dc?.is_uploaded && inv.dc?.file_path && !seen.has(inv.dc.file_path)) {
+          seen.add(inv.dc.file_path)
+          invoiceDCs.push({ invoiceNumber: inv.invoice_number, filePath: inv.dc.file_path })
+        }
+      }
+
+      // Merge report with invoice PDFs
+      const mergedPdf = await PDFDocument.load(reportPdfBytes)
+      let skippedCount = 0
+
+      for (const { invoiceNumber, filePath } of invoiceDCs) {
+        try {
+          const { data: signedUrlData, error: urlError } = await supabase.storage
+            .from('compliance-docs')
+            .createSignedUrl(filePath, 3600)
+
+          if (urlError || !signedUrlData?.signedUrl) {
+            skippedCount++
+            continue
+          }
+
+          const response = await fetch(signedUrlData.signedUrl)
+          if (!response.ok) {
+            skippedCount++
+            continue
+          }
+
+          const invoicePdfBytes = await response.arrayBuffer()
+
+          // Add separator page
+          const separatorPage = mergedPdf.addPage()
+          const { width, height } = separatorPage.getSize()
+          separatorPage.drawText(`Invoice: ${invoiceNumber}`, {
+            x: 50,
+            y: height - 80,
+            size: 20,
+            color: rgb(0.2, 0.25, 0.33),
+          })
+          separatorPage.drawText('Attached Document', {
+            x: 50,
+            y: height - 110,
+            size: 12,
+            color: rgb(0.4, 0.4, 0.4),
+          })
+
+          // Copy invoice PDF pages
+          const invoiceDoc = await PDFDocument.load(invoicePdfBytes)
+          const copiedPages = await mergedPdf.copyPages(invoiceDoc, invoiceDoc.getPageIndices())
+          copiedPages.forEach(page => mergedPdf.addPage(page))
+        } catch {
+          skippedCount++
+        }
+      }
+
+      if (skippedCount > 0) {
+        toast.warning(`${skippedCount} invoice document(s) could not be attached`)
+      }
+
+      // Save merged PDF
+      const mergedPdfBytes = await mergedPdf.save()
+      const blob = new Blob([mergedPdfBytes.buffer as ArrayBuffer], { type: 'application/pdf' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const dateStr = selectedMir.formattedDate.replace(/ /g, '-')
+      a.download = `MIR_${selectedMir.mirNumber}_${siteName.replace(/[^a-zA-Z0-9]/g, '_')}_${dateStr}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      toast.success('PDF downloaded successfully')
+    } catch (error) {
+      console.error('PDF generation error:', error)
+      toast.error('Failed to generate PDF')
+    } finally {
+      setGeneratingPdf(false)
     }
-
-    // Save
-    const dateStr = selectedMir.formattedDate.replace(/ /g, '-')
-    const filename = `MIR_${selectedMir.mirNumber}_${siteName.replace(/[^a-zA-Z0-9]/g, '_')}_${dateStr}.pdf`
-    doc.save(filename)
-    toast.success('PDF downloaded successfully')
   }
 
   function drawSignatureSection(doc: jsPDF, startY: number) {
@@ -437,11 +526,15 @@ export default function MIRReportsPage() {
                 <label className="text-sm font-medium text-slate-700">&nbsp;</label>
                 <Button
                   onClick={generatePDF}
-                  disabled={!selectedMirDate || reportData.length === 0}
+                  disabled={!selectedMirDate || reportData.length === 0 || generatingPdf}
                   className="w-full"
                 >
-                  <Download className="h-4 w-4 mr-2" />
-                  Download PDF
+                  {generatingPdf ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4 mr-2" />
+                  )}
+                  {generatingPdf ? 'Generating...' : 'Download PDF'}
                 </Button>
               </div>
             </div>
@@ -463,6 +556,7 @@ export default function MIRReportsPage() {
                   <TableHeader>
                     <TableRow className="bg-slate-100">
                       <TableHead className="w-16 text-center">S.No</TableHead>
+                      <TableHead className="w-28">Invoice No.</TableHead>
                       <TableHead>Material</TableHead>
                       <TableHead className="w-20 text-right">Qty</TableHead>
                       <TableHead className="w-20 text-center">Unit</TableHead>
@@ -475,6 +569,7 @@ export default function MIRReportsPage() {
                     {reportData.map((row) => (
                       <TableRow key={row.sno}>
                         <TableCell className="text-center">{row.sno}</TableCell>
+                        <TableCell className="text-sm">{row.invoiceNumber}</TableCell>
                         <TableCell>{row.material}</TableCell>
                         <TableCell className="text-right">{row.qty}</TableCell>
                         <TableCell className="text-center">{row.unit}</TableCell>
