@@ -25,6 +25,7 @@ app/
 │   │   ├── sites/              # Sites management
 │   │   ├── boq/                # BOQ Management
 │   │   ├── boq-progress/       # BOQ Progress tracking
+│   │   ├── ra-billing/         # RA Billing (extended BOQ with rates/actuals)
 │   │   ├── workstations/       # Workstation progress tracking
 │   │   ├── material-grn/       # GRN (Goods Receipt Note)
 │   │   ├── inventory/          # Inventory view
@@ -80,6 +81,22 @@ app/
   - Displays material consumption recorded from Workstations module
   - Shows material name, quantity, workstation name, date
   - No direct recording - consumption is managed via Workstations module
+
+### 2b. RA Billing (`/ra-billing`)
+- Extended BOQ view with billing columns (rate, amounts, GST, actuals)
+- Site -> Package cascading selectors
+- Summary cards: Total BOQ Amount, Total Actual Amount, Billing %, Items with Actuals
+- Table grouped by headline (collapsible sections) with 12 columns:
+  - S.No, Description, Location, Unit, Quantity, Rate, Total Amount, GST Amount, Total w/ GST, Actual Qty, Actual Amount, Actual Amt w/ GST
+- Headline subtotals and grand total row
+- Export to Excel
+- Data comes from 7 additional columns on `boq_line_items`:
+  - `rate`, `total_amount`, `gst_amount`, `total_amount_with_gst` (BOQ billing)
+  - `actual_quantity`, `actual_amount`, `actual_amount_with_gst` (actuals from Excel import)
+- **Excel Parser**: Detects extended 12-column template (column F header contains "RATE")
+  - Parses columns F-L for billing data
+  - Rows without S.No but with data grouped under auto-generated "Miscellaneous" headline
+  - Rows that look like totals (description contains "total"/"sub total"/"grand total") are skipped
 
 ### 3. Material GRN (`/material-grn`)
 - Invoice-based goods receipt notes
@@ -460,7 +477,7 @@ Navigation items are defined in:
 - `src/components/layout/mobile-nav.tsx` - Mobile navigation
 
 Main navigation items:
-- Dashboard, Sites, BOQ Management, BOQ Progress, Workstations, Material GRN, Inventory, Expenses Recording, Expense Dashboard, Supplier Invoices, Checklists
+- Dashboard, Sites, BOQ Management, BOQ Progress, RA Billing, Workstations, Material GRN, Inventory, Expenses Recording, Expense Dashboard, Supplier Invoices, Checklists
 
 Reports submenu items (expandable group):
 - Overview, MIR Reports
@@ -493,6 +510,7 @@ Key migrations:
 - `021_grn_line_items_fix.sql` - Convert GRN amount columns from computed to stored values
 - `022_grn_invoice_date.sql` - Add invoice_date column to grn_invoices
 - `023_equipment_rates.sql` - Equipment rates table (supplier + equipment + rate), add supplier columns to expense_equipment
+- `024_ra_billing_columns.sql` - Add 7 RA Billing columns to boq_line_items (rate, total_amount, gst_amount, total_amount_with_gst, actual_quantity, actual_amount, actual_amount_with_gst)
 
 ## Import/Utility Scripts
 

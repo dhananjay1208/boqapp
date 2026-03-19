@@ -202,6 +202,13 @@ function BOQUploadContent() {
             location: item.location || null,
             unit: item.unit,
             quantity: item.quantity,
+            rate: item.rate ?? null,
+            total_amount: item.totalAmount ?? null,
+            gst_amount: item.gstAmount ?? null,
+            total_amount_with_gst: item.totalAmountWithGst ?? null,
+            actual_quantity: item.actualQuantity ?? null,
+            actual_amount: item.actualAmount ?? null,
+            actual_amount_with_gst: item.actualAmountWithGst ?? null,
             status: 'pending',
           }))
 
@@ -242,6 +249,7 @@ function BOQUploadContent() {
     (sum, d) => sum + d.headlines.reduce((s, h) => s + h.lineItems.length, 0),
     0
   ) || 0
+  const hasRaBillingData = parsedData?.some(d => d.hasRaBillingData) || false
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -468,6 +476,17 @@ function BOQUploadContent() {
                                         <TableHead>Location</TableHead>
                                         <TableHead>Unit</TableHead>
                                         <TableHead className="text-right">Quantity</TableHead>
+                                        {hasRaBillingData && (
+                                          <>
+                                            <TableHead className="text-right">Rate</TableHead>
+                                            <TableHead className="text-right">Total Amt</TableHead>
+                                            <TableHead className="text-right">GST Amt</TableHead>
+                                            <TableHead className="text-right">Total w/ GST</TableHead>
+                                            <TableHead className="text-right">Actual Qty</TableHead>
+                                            <TableHead className="text-right">Actual Amt</TableHead>
+                                            <TableHead className="text-right">Actual w/ GST</TableHead>
+                                          </>
+                                        )}
                                       </TableRow>
                                     </TableHeader>
                                     <TableBody>
@@ -488,11 +507,22 @@ function BOQUploadContent() {
                                           <TableCell className="text-right">
                                             {item.quantity || '-'}
                                           </TableCell>
+                                          {hasRaBillingData && (
+                                            <>
+                                              <TableCell className="text-right">{item.rate ?? '-'}</TableCell>
+                                              <TableCell className="text-right">{item.totalAmount ?? '-'}</TableCell>
+                                              <TableCell className="text-right">{item.gstAmount ?? '-'}</TableCell>
+                                              <TableCell className="text-right">{item.totalAmountWithGst ?? '-'}</TableCell>
+                                              <TableCell className="text-right">{item.actualQuantity ?? '-'}</TableCell>
+                                              <TableCell className="text-right">{item.actualAmount ?? '-'}</TableCell>
+                                              <TableCell className="text-right">{item.actualAmountWithGst ?? '-'}</TableCell>
+                                            </>
+                                          )}
                                         </TableRow>
                                       ))}
                                       {headline.lineItems.length > 5 && (
                                         <TableRow>
-                                          <TableCell colSpan={5} className="text-center text-slate-500">
+                                          <TableCell colSpan={hasRaBillingData ? 12 : 5} className="text-center text-slate-500">
                                             ... and {headline.lineItems.length - 5} more items
                                           </TableCell>
                                         </TableRow>

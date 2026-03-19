@@ -130,23 +130,83 @@ export default function SiteDetailPage() {
   }
 
   async function deletePackage(id: string) {
-    if (!confirm('Are you sure you want to delete this package? This will also delete all related BOQ items.')) {
+    if (!confirm('Are you sure you want to delete this package? This will also delete all related BOQ data, progress entries, and line items.')) {
       return
     }
 
     try {
+      // Get all headlines for this package
+      const { data: headlineRows } = await supabase
+        .from('boq_headlines')
+        .select('id')
+        .eq('package_id', id)
+
+      const headlineIds = (headlineRows || []).map(h => h.id)
+
+      if (headlineIds.length > 0) {
+        // Get all line item IDs
+        const { data: lineItemRows } = await supabase
+          .from('boq_line_items')
+          .select('id')
+          .in('headline_id', headlineIds)
+
+        const lineItemIds = (lineItemRows || []).map(li => li.id)
+
+        if (lineItemIds.length > 0) {
+          // Delete workstation_boq_progress (no CASCADE, references boq_line_items)
+          // First get progress IDs to delete material consumption
+          const { data: progressRows } = await supabase
+            .from('workstation_boq_progress')
+            .select('id')
+            .in('boq_line_item_id', lineItemIds)
+
+          const progressIds = (progressRows || []).map(p => p.id)
+          if (progressIds.length > 0) {
+            await supabase
+              .from('workstation_material_consumption')
+              .delete()
+              .in('workstation_boq_progress_id', progressIds)
+
+            await supabase
+              .from('workstation_boq_progress')
+              .delete()
+              .in('boq_line_item_id', lineItemIds)
+          }
+
+          // Delete jmr_line_items (no CASCADE, references boq_line_items)
+          await supabase
+            .from('jmr_line_items')
+            .delete()
+            .in('line_item_id', lineItemIds)
+
+          // Delete line items (cascades: materials, boq_checklists, boq_jmr, material_consumption)
+          const { error: liError } = await supabase
+            .from('boq_line_items')
+            .delete()
+            .in('headline_id', headlineIds)
+          if (liError) throw liError
+        }
+
+        // Delete headlines (cascades: checklists, jmr_reports)
+        const { error: hlError } = await supabase
+          .from('boq_headlines')
+          .delete()
+          .eq('package_id', id)
+        if (hlError) throw hlError
+      }
+
+      // Delete the package
       const { error } = await supabase
         .from('packages')
         .delete()
         .eq('id', id)
-
       if (error) throw error
 
       setPackages(packages.filter(p => p.id !== id))
       toast.success('Package deleted successfully')
-    } catch (error) {
-      console.error('Error deleting package:', error)
-      toast.error('Failed to delete package')
+    } catch (error: any) {
+      console.error('Error deleting package:', error?.message || error?.code || JSON.stringify(error))
+      toast.error(error?.message || 'Failed to delete package')
     }
   }
 

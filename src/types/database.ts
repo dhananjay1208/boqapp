@@ -99,6 +99,13 @@ export interface Database {
           location: string | null
           unit: string
           quantity: number
+          rate: number | null
+          total_amount: number | null
+          gst_amount: number | null
+          total_amount_with_gst: number | null
+          actual_quantity: number | null
+          actual_amount: number | null
+          actual_amount_with_gst: number | null
           status: 'pending' | 'in_progress' | 'completed'
           created_at: string
         }
@@ -110,6 +117,13 @@ export interface Database {
           location?: string | null
           unit: string
           quantity: number
+          rate?: number | null
+          total_amount?: number | null
+          gst_amount?: number | null
+          total_amount_with_gst?: number | null
+          actual_quantity?: number | null
+          actual_amount?: number | null
+          actual_amount_with_gst?: number | null
           status?: 'pending' | 'in_progress' | 'completed'
           created_at?: string
         }
@@ -121,6 +135,13 @@ export interface Database {
           location?: string | null
           unit?: string
           quantity?: number
+          rate?: number | null
+          total_amount?: number | null
+          gst_amount?: number | null
+          total_amount_with_gst?: number | null
+          actual_quantity?: number | null
+          actual_amount?: number | null
+          actual_amount_with_gst?: number | null
           status?: 'pending' | 'in_progress' | 'completed'
           created_at?: string
         }

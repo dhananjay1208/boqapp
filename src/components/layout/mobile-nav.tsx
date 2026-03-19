@@ -34,6 +34,7 @@ import {
   Wrench,
   FileText,
   LayoutList,
+  IndianRupee,
 } from 'lucide-react'
 
 const navigation = [
@@ -41,6 +42,7 @@ const navigation = [
   { name: 'Sites', href: '/sites', icon: Building2 },
   { name: 'BOQ Management', href: '/boq', icon: FileSpreadsheet },
   { name: 'BOQ Progress', href: '/boq-progress', icon: TrendingUp },
+  { name: 'RA Billing', href: '/ra-billing', icon: IndianRupee },
   { name: 'Workstations', href: '/workstations', icon: Wrench },
   { name: 'Material GRN', href: '/material-grn', icon: Receipt },
   { name: 'Inventory', href: '/inventory', icon: Warehouse },
