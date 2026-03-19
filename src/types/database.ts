@@ -44,6 +44,7 @@ export interface Database {
           site_id: string
           name: string
           code: string | null
+          billing_type: 'standard' | 'supply_installation'
           created_at: string
         }
         Insert: {
@@ -51,6 +52,7 @@ export interface Database {
           site_id: string
           name: string
           code?: string | null
+          billing_type?: 'standard' | 'supply_installation'
           created_at?: string
         }
         Update: {
@@ -58,6 +60,7 @@ export interface Database {
           site_id?: string
           name?: string
           code?: string | null
+          billing_type?: 'standard' | 'supply_installation'
           created_at?: string
         }
       }
@@ -106,6 +109,14 @@ export interface Database {
           actual_quantity: number | null
           actual_amount: number | null
           actual_amount_with_gst: number | null
+          qty_ext: string | null
+          supply_rate: number | null
+          installation_rate: number | null
+          supply_amount: number | null
+          installation_amount: number | null
+          actual_supply_amount: number | null
+          actual_installation_amount: number | null
+          actual_total_amount: number | null
           status: 'pending' | 'in_progress' | 'completed'
           created_at: string
         }
@@ -124,6 +135,14 @@ export interface Database {
           actual_quantity?: number | null
           actual_amount?: number | null
           actual_amount_with_gst?: number | null
+          qty_ext?: string | null
+          supply_rate?: number | null
+          installation_rate?: number | null
+          supply_amount?: number | null
+          installation_amount?: number | null
+          actual_supply_amount?: number | null
+          actual_installation_amount?: number | null
+          actual_total_amount?: number | null
           status?: 'pending' | 'in_progress' | 'completed'
           created_at?: string
         }
@@ -142,6 +161,14 @@ export interface Database {
           actual_quantity?: number | null
           actual_amount?: number | null
           actual_amount_with_gst?: number | null
+          qty_ext?: string | null
+          supply_rate?: number | null
+          installation_rate?: number | null
+          supply_amount?: number | null
+          installation_amount?: number | null
+          actual_supply_amount?: number | null
+          actual_installation_amount?: number | null
+          actual_total_amount?: number | null
           status?: 'pending' | 'in_progress' | 'completed'
           created_at?: string
         }

@@ -49,6 +49,7 @@ interface PackageData {
   id: string
   name: string
   site_id: string
+  billing_type: 'standard' | 'supply_installation'
 }
 
 interface LineItem {
@@ -66,6 +67,14 @@ interface LineItem {
   actual_quantity: number | null
   actual_amount: number | null
   actual_amount_with_gst: number | null
+  qty_ext: string | null
+  supply_rate: number | null
+  installation_rate: number | null
+  supply_amount: number | null
+  installation_amount: number | null
+  actual_supply_amount: number | null
+  actual_installation_amount: number | null
+  actual_total_amount: number | null
 }
 
 interface Headline {
@@ -135,7 +144,7 @@ export default function RABillingPage() {
     try {
       const { data, error } = await supabase
         .from('packages')
-        .select('id, name, site_id')
+        .select('id, name, site_id, billing_type')
         .eq('site_id', selectedSiteId)
         .order('name')
       if (error) throw error
@@ -190,66 +199,97 @@ export default function RABillingPage() {
     setExpandedHeadlines(newExpanded)
   }
 
+  // Determine billing type from selected package
+  const selectedPkg = packages.find(p => p.id === selectedPackageId)
+  const isSupplyInstallation = selectedPkg?.billing_type === 'supply_installation'
+
   // Summary calculations
   const allLineItems = headlines.flatMap(h => h.line_items)
-  const totalBOQAmount = allLineItems.reduce((sum, li) => sum + (li.total_amount_with_gst || 0), 0)
-  const totalActualAmount = allLineItems.reduce((sum, li) => sum + (li.actual_amount_with_gst || 0), 0)
+
+  const totalBOQAmount = isSupplyInstallation
+    ? allLineItems.reduce((sum, li) => sum + (li.supply_amount || 0) + (li.installation_amount || 0), 0)
+    : allLineItems.reduce((sum, li) => sum + (li.total_amount_with_gst || 0), 0)
+
+  const totalActualAmount = isSupplyInstallation
+    ? allLineItems.reduce((sum, li) => sum + (li.actual_total_amount || ((li.actual_supply_amount || 0) + (li.actual_installation_amount || 0))), 0)
+    : allLineItems.reduce((sum, li) => sum + (li.actual_amount_with_gst || 0), 0)
+
   const billingPercent = totalBOQAmount > 0 ? (totalActualAmount / totalBOQAmount) * 100 : 0
   const itemsWithActuals = allLineItems.filter(li => li.actual_quantity && li.actual_quantity > 0).length
 
   function getHeadlineSubtotals(lineItems: LineItem[]) {
+    if (isSupplyInstallation) {
+      return {
+        supplyAmount: lineItems.reduce((s, li) => s + (li.supply_amount || 0), 0),
+        installationAmount: lineItems.reduce((s, li) => s + (li.installation_amount || 0), 0),
+        totalBoq: lineItems.reduce((s, li) => s + (li.supply_amount || 0) + (li.installation_amount || 0), 0),
+        actualSupplyAmount: lineItems.reduce((s, li) => s + (li.actual_supply_amount || 0), 0),
+        actualInstallationAmount: lineItems.reduce((s, li) => s + (li.actual_installation_amount || 0), 0),
+        actualTotalAmount: lineItems.reduce((s, li) => s + (li.actual_total_amount || ((li.actual_supply_amount || 0) + (li.actual_installation_amount || 0))), 0),
+        // Standard fields (unused but keeps return type consistent)
+        totalAmount: 0, gstAmount: 0, totalAmountWithGst: 0, actualAmount: 0, actualAmountWithGst: 0,
+      }
+    }
     return {
       totalAmount: lineItems.reduce((s, li) => s + (li.total_amount || 0), 0),
       gstAmount: lineItems.reduce((s, li) => s + (li.gst_amount || 0), 0),
       totalAmountWithGst: lineItems.reduce((s, li) => s + (li.total_amount_with_gst || 0), 0),
       actualAmount: lineItems.reduce((s, li) => s + (li.actual_amount || 0), 0),
       actualAmountWithGst: lineItems.reduce((s, li) => s + (li.actual_amount_with_gst || 0), 0),
+      // S&I fields (unused)
+      supplyAmount: 0, installationAmount: 0, totalBoq: 0,
+      actualSupplyAmount: 0, actualInstallationAmount: 0, actualTotalAmount: 0,
     }
   }
 
   function exportToExcel() {
     const wb = XLSX.utils.book_new()
-    const rows: any[][] = [
-      ['S.No', 'Description', 'Location', 'Unit', 'Quantity', 'Rate', 'Total Amount', 'GST Amount', 'Total w/ GST', 'Actual Qty', 'Actual Amount', 'Actual Amt w/ GST'],
-    ]
+    const rows: any[][] = []
 
-    for (const headline of headlines) {
-      // Headline row
-      rows.push([headline.serial_number, headline.name, '', '', '', '', '', '', '', '', '', ''])
+    if (isSupplyInstallation) {
+      rows.push(['S.No', 'Description', 'Unit', 'Qty Ext', 'Quantity', 'Supply Rate', 'Install Rate', 'Supply Amt', 'Install Amt', 'Actual Qty', 'Actual Supply Amt', 'Actual Install Amt', 'Actual Total Amt'])
 
-      for (const li of headline.line_items) {
-        rows.push([
-          li.item_number,
-          li.description,
-          li.location || '',
-          li.unit,
-          li.quantity,
-          li.rate,
-          li.total_amount,
-          li.gst_amount,
-          li.total_amount_with_gst,
-          li.actual_quantity,
-          li.actual_amount,
-          li.actual_amount_with_gst,
-        ])
+      for (const headline of headlines) {
+        rows.push([headline.serial_number, headline.name, '', '', '', '', '', '', '', '', '', '', ''])
+        for (const li of headline.line_items) {
+          rows.push([
+            li.item_number, li.description, li.unit, li.qty_ext || '', li.quantity,
+            li.supply_rate, li.installation_rate, li.supply_amount, li.installation_amount,
+            li.actual_quantity, li.actual_supply_amount, li.actual_installation_amount, li.actual_total_amount,
+          ])
+        }
+        const sub = getHeadlineSubtotals(headline.line_items)
+        rows.push(['', 'Subtotal', '', '', '', '', '', sub.supplyAmount, sub.installationAmount, '', sub.actualSupplyAmount, sub.actualInstallationAmount, sub.actualTotalAmount])
       }
 
-      // Subtotal row
-      const sub = getHeadlineSubtotals(headline.line_items)
-      rows.push(['', 'Subtotal', '', '', '', '', sub.totalAmount, sub.gstAmount, sub.totalAmountWithGst, '', sub.actualAmount, sub.actualAmountWithGst])
+      const grandTotals = getHeadlineSubtotals(allLineItems)
+      rows.push([])
+      rows.push(['', 'GRAND TOTAL', '', '', '', '', '', grandTotals.supplyAmount, grandTotals.installationAmount, '', grandTotals.actualSupplyAmount, grandTotals.actualInstallationAmount, grandTotals.actualTotalAmount])
+    } else {
+      rows.push(['S.No', 'Description', 'Location', 'Unit', 'Quantity', 'Rate', 'Total Amount', 'GST Amount', 'Total w/ GST', 'Actual Qty', 'Actual Amount', 'Actual Amt w/ GST'])
+
+      for (const headline of headlines) {
+        rows.push([headline.serial_number, headline.name, '', '', '', '', '', '', '', '', '', ''])
+        for (const li of headline.line_items) {
+          rows.push([
+            li.item_number, li.description, li.location || '', li.unit, li.quantity,
+            li.rate, li.total_amount, li.gst_amount, li.total_amount_with_gst,
+            li.actual_quantity, li.actual_amount, li.actual_amount_with_gst,
+          ])
+        }
+        const sub = getHeadlineSubtotals(headline.line_items)
+        rows.push(['', 'Subtotal', '', '', '', '', sub.totalAmount, sub.gstAmount, sub.totalAmountWithGst, '', sub.actualAmount, sub.actualAmountWithGst])
+      }
+
+      const grandTotals = getHeadlineSubtotals(allLineItems)
+      rows.push([])
+      rows.push(['', 'GRAND TOTAL', '', '', '', '', grandTotals.totalAmount, grandTotals.gstAmount, grandTotals.totalAmountWithGst, '', grandTotals.actualAmount, grandTotals.actualAmountWithGst])
     }
 
-    // Grand total
-    const grandTotals = getHeadlineSubtotals(allLineItems)
-    rows.push([])
-    rows.push(['', 'GRAND TOTAL', '', '', '', '', grandTotals.totalAmount, grandTotals.gstAmount, grandTotals.totalAmountWithGst, '', grandTotals.actualAmount, grandTotals.actualAmountWithGst])
-
     const ws = XLSX.utils.aoa_to_sheet(rows)
-    ws['!cols'] = [
-      { wch: 8 }, { wch: 40 }, { wch: 15 }, { wch: 8 }, { wch: 10 },
-      { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 },
-      { wch: 14 }, { wch: 14 },
-    ]
+    ws['!cols'] = isSupplyInstallation
+      ? [{ wch: 8 }, { wch: 40 }, { wch: 8 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 14 }]
+      : [{ wch: 8 }, { wch: 40 }, { wch: 15 }, { wch: 8 }, { wch: 10 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 14 }]
 
     const siteName = sites.find(s => s.id === selectedSiteId)?.name || 'Site'
     const pkgName = packages.find(p => p.id === selectedPackageId)?.name || 'Package'
@@ -435,14 +475,14 @@ export default function RABillingPage() {
                                 {headline.serial_number}. {headline.name}
                               </CardTitle>
                               <CardDescription>
-                                {headline.line_items.length} items | Subtotal: {formatAmount(sub.totalAmountWithGst)}
+                                {headline.line_items.length} items | Subtotal: {formatAmount(isSupplyInstallation ? sub.totalBoq : sub.totalAmountWithGst)}
                               </CardDescription>
                             </div>
                           </div>
-                          {sub.actualAmountWithGst > 0 && (
+                          {(isSupplyInstallation ? sub.actualTotalAmount > 0 : sub.actualAmountWithGst > 0) && (
                             <div className="text-right text-sm">
                               <p className="text-slate-500">Actual</p>
-                              <p className="font-medium text-green-700">{formatAmount(sub.actualAmountWithGst)}</p>
+                              <p className="font-medium text-green-700">{formatAmount(isSupplyInstallation ? sub.actualTotalAmount : sub.actualAmountWithGst)}</p>
                             </div>
                           )}
                         </div>
@@ -456,48 +496,96 @@ export default function RABillingPage() {
                             <TableHeader>
                               <TableRow>
                                 <TableHead className="w-[60px] whitespace-nowrap">S.No</TableHead>
-                                <TableHead className="min-w-[200px]">Description</TableHead>
-                                <TableHead className="whitespace-nowrap">Location</TableHead>
-                                <TableHead className="whitespace-nowrap">Unit</TableHead>
-                                <TableHead className="text-right whitespace-nowrap">Qty</TableHead>
-                                <TableHead className="text-right whitespace-nowrap">Rate</TableHead>
-                                <TableHead className="text-right whitespace-nowrap">Total Amt</TableHead>
-                                <TableHead className="text-right whitespace-nowrap">GST Amt</TableHead>
-                                <TableHead className="text-right whitespace-nowrap">Total w/ GST</TableHead>
-                                <TableHead className="text-right whitespace-nowrap">Actual Qty</TableHead>
-                                <TableHead className="text-right whitespace-nowrap">Actual Amt</TableHead>
-                                <TableHead className="text-right whitespace-nowrap">Actual w/ GST</TableHead>
+                                <TableHead className="min-w-[200px] max-w-[350px]">Description</TableHead>
+                                {isSupplyInstallation ? (
+                                  <>
+                                    <TableHead className="whitespace-nowrap">Unit</TableHead>
+                                    <TableHead className="whitespace-nowrap">Qty Ext</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">Qty</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">Supply Rate</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">Install Rate</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">Supply Amt</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">Install Amt</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">Actual Qty</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">Actual Supply</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">Actual Install</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">Actual Total</TableHead>
+                                  </>
+                                ) : (
+                                  <>
+                                    <TableHead className="whitespace-nowrap">Location</TableHead>
+                                    <TableHead className="whitespace-nowrap">Unit</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">Qty</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">Rate</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">Total Amt</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">GST Amt</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">Total w/ GST</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">Actual Qty</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">Actual Amt</TableHead>
+                                    <TableHead className="text-right whitespace-nowrap">Actual w/ GST</TableHead>
+                                  </>
+                                )}
                               </TableRow>
                             </TableHeader>
                             <TableBody>
                               {headline.line_items.map((li) => (
                                 <TableRow key={li.id}>
                                   <TableCell className="font-mono text-sm">{li.item_number}</TableCell>
-                                  <TableCell>
-                                    <p className="line-clamp-2" title={li.description}>{li.description}</p>
+                                  <TableCell className="max-w-[350px]">
+                                    <p className="whitespace-normal break-words" title={li.description}>{li.description}</p>
                                   </TableCell>
-                                  <TableCell className="text-sm text-slate-500">{li.location || '-'}</TableCell>
-                                  <TableCell>{li.unit || '-'}</TableCell>
-                                  <TableCell className="text-right">{formatQty(li.quantity)}</TableCell>
-                                  <TableCell className="text-right">{formatAmount(li.rate)}</TableCell>
-                                  <TableCell className="text-right">{formatAmount(li.total_amount)}</TableCell>
-                                  <TableCell className="text-right">{formatAmount(li.gst_amount)}</TableCell>
-                                  <TableCell className="text-right font-medium">{formatAmount(li.total_amount_with_gst)}</TableCell>
-                                  <TableCell className="text-right">{formatQty(li.actual_quantity)}</TableCell>
-                                  <TableCell className="text-right">{formatAmount(li.actual_amount)}</TableCell>
-                                  <TableCell className="text-right font-medium">{formatAmount(li.actual_amount_with_gst)}</TableCell>
+                                  {isSupplyInstallation ? (
+                                    <>
+                                      <TableCell>{li.unit || '-'}</TableCell>
+                                      <TableCell className="text-sm">{li.qty_ext || '-'}</TableCell>
+                                      <TableCell className="text-right">{formatQty(li.quantity)}</TableCell>
+                                      <TableCell className="text-right">{formatAmount(li.supply_rate)}</TableCell>
+                                      <TableCell className="text-right">{formatAmount(li.installation_rate)}</TableCell>
+                                      <TableCell className="text-right">{formatAmount(li.supply_amount)}</TableCell>
+                                      <TableCell className="text-right">{formatAmount(li.installation_amount)}</TableCell>
+                                      <TableCell className="text-right">{formatQty(li.actual_quantity)}</TableCell>
+                                      <TableCell className="text-right">{formatAmount(li.actual_supply_amount)}</TableCell>
+                                      <TableCell className="text-right">{formatAmount(li.actual_installation_amount)}</TableCell>
+                                      <TableCell className="text-right font-medium">{formatAmount(li.actual_total_amount)}</TableCell>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <TableCell className="text-sm text-slate-500">{li.location || '-'}</TableCell>
+                                      <TableCell>{li.unit || '-'}</TableCell>
+                                      <TableCell className="text-right">{formatQty(li.quantity)}</TableCell>
+                                      <TableCell className="text-right">{formatAmount(li.rate)}</TableCell>
+                                      <TableCell className="text-right">{formatAmount(li.total_amount)}</TableCell>
+                                      <TableCell className="text-right">{formatAmount(li.gst_amount)}</TableCell>
+                                      <TableCell className="text-right font-medium">{formatAmount(li.total_amount_with_gst)}</TableCell>
+                                      <TableCell className="text-right">{formatQty(li.actual_quantity)}</TableCell>
+                                      <TableCell className="text-right">{formatAmount(li.actual_amount)}</TableCell>
+                                      <TableCell className="text-right font-medium">{formatAmount(li.actual_amount_with_gst)}</TableCell>
+                                    </>
+                                  )}
                                 </TableRow>
                               ))}
                               {/* Subtotal row */}
-                              <TableRow className="bg-slate-50 font-medium">
-                                <TableCell colSpan={6} className="text-right">Subtotal</TableCell>
-                                <TableCell className="text-right">{formatAmount(sub.totalAmount)}</TableCell>
-                                <TableCell className="text-right">{formatAmount(sub.gstAmount)}</TableCell>
-                                <TableCell className="text-right">{formatAmount(sub.totalAmountWithGst)}</TableCell>
-                                <TableCell />
-                                <TableCell className="text-right">{formatAmount(sub.actualAmount)}</TableCell>
-                                <TableCell className="text-right">{formatAmount(sub.actualAmountWithGst)}</TableCell>
-                              </TableRow>
+                              {isSupplyInstallation ? (
+                                <TableRow className="bg-slate-50 font-medium">
+                                  <TableCell colSpan={7} className="text-right">Subtotal</TableCell>
+                                  <TableCell className="text-right">{formatAmount(sub.supplyAmount)}</TableCell>
+                                  <TableCell className="text-right">{formatAmount(sub.installationAmount)}</TableCell>
+                                  <TableCell />
+                                  <TableCell className="text-right">{formatAmount(sub.actualSupplyAmount)}</TableCell>
+                                  <TableCell className="text-right">{formatAmount(sub.actualInstallationAmount)}</TableCell>
+                                  <TableCell className="text-right">{formatAmount(sub.actualTotalAmount)}</TableCell>
+                                </TableRow>
+                              ) : (
+                                <TableRow className="bg-slate-50 font-medium">
+                                  <TableCell colSpan={6} className="text-right">Subtotal</TableCell>
+                                  <TableCell className="text-right">{formatAmount(sub.totalAmount)}</TableCell>
+                                  <TableCell className="text-right">{formatAmount(sub.gstAmount)}</TableCell>
+                                  <TableCell className="text-right">{formatAmount(sub.totalAmountWithGst)}</TableCell>
+                                  <TableCell />
+                                  <TableCell className="text-right">{formatAmount(sub.actualAmount)}</TableCell>
+                                  <TableCell className="text-right">{formatAmount(sub.actualAmountWithGst)}</TableCell>
+                                </TableRow>
+                              )}
                             </TableBody>
                           </Table>
                         </div>
@@ -514,15 +602,27 @@ export default function RABillingPage() {
                 <div className="overflow-x-auto">
                   <Table>
                     <TableBody>
-                      <TableRow className="bg-slate-900 text-white font-bold">
-                        <TableCell colSpan={6} className="text-right text-white">GRAND TOTAL</TableCell>
-                        <TableCell className="text-right text-white">{formatAmount(getHeadlineSubtotals(allLineItems).totalAmount)}</TableCell>
-                        <TableCell className="text-right text-white">{formatAmount(getHeadlineSubtotals(allLineItems).gstAmount)}</TableCell>
-                        <TableCell className="text-right text-white">{formatAmount(totalBOQAmount)}</TableCell>
-                        <TableCell className="text-white" />
-                        <TableCell className="text-right text-white">{formatAmount(getHeadlineSubtotals(allLineItems).actualAmount)}</TableCell>
-                        <TableCell className="text-right text-white">{formatAmount(totalActualAmount)}</TableCell>
-                      </TableRow>
+                      {isSupplyInstallation ? (
+                        <TableRow className="bg-slate-900 text-white font-bold">
+                          <TableCell colSpan={7} className="text-right text-white">GRAND TOTAL</TableCell>
+                          <TableCell className="text-right text-white">{formatAmount(getHeadlineSubtotals(allLineItems).supplyAmount)}</TableCell>
+                          <TableCell className="text-right text-white">{formatAmount(getHeadlineSubtotals(allLineItems).installationAmount)}</TableCell>
+                          <TableCell className="text-white" />
+                          <TableCell className="text-right text-white">{formatAmount(getHeadlineSubtotals(allLineItems).actualSupplyAmount)}</TableCell>
+                          <TableCell className="text-right text-white">{formatAmount(getHeadlineSubtotals(allLineItems).actualInstallationAmount)}</TableCell>
+                          <TableCell className="text-right text-white">{formatAmount(totalActualAmount)}</TableCell>
+                        </TableRow>
+                      ) : (
+                        <TableRow className="bg-slate-900 text-white font-bold">
+                          <TableCell colSpan={6} className="text-right text-white">GRAND TOTAL</TableCell>
+                          <TableCell className="text-right text-white">{formatAmount(getHeadlineSubtotals(allLineItems).totalAmount)}</TableCell>
+                          <TableCell className="text-right text-white">{formatAmount(getHeadlineSubtotals(allLineItems).gstAmount)}</TableCell>
+                          <TableCell className="text-right text-white">{formatAmount(totalBOQAmount)}</TableCell>
+                          <TableCell className="text-white" />
+                          <TableCell className="text-right text-white">{formatAmount(getHeadlineSubtotals(allLineItems).actualAmount)}</TableCell>
+                          <TableCell className="text-right text-white">{formatAmount(totalActualAmount)}</TableCell>
+                        </TableRow>
+                      )}
                     </TableBody>
                   </Table>
                 </div>

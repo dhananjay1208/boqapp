@@ -172,6 +172,12 @@ function BOQUploadContent() {
     setSaving(true)
 
     try {
+      // Set billing_type on the package
+      await supabase
+        .from('packages')
+        .update({ billing_type: billingType })
+        .eq('id', selectedPackage)
+
       // Flatten all headlines from all parsed sheets
       const allHeadlines = parsedData.flatMap(d => d.headlines)
 
@@ -209,6 +215,14 @@ function BOQUploadContent() {
             actual_quantity: item.actualQuantity ?? null,
             actual_amount: item.actualAmount ?? null,
             actual_amount_with_gst: item.actualAmountWithGst ?? null,
+            qty_ext: item.qtyExt ?? null,
+            supply_rate: item.supplyRate ?? null,
+            installation_rate: item.installationRate ?? null,
+            supply_amount: item.supplyAmount ?? null,
+            installation_amount: item.installationAmount ?? null,
+            actual_supply_amount: item.actualSupplyAmount ?? null,
+            actual_installation_amount: item.actualInstallationAmount ?? null,
+            actual_total_amount: item.actualTotalAmount ?? null,
             status: 'pending',
           }))
 
@@ -250,6 +264,8 @@ function BOQUploadContent() {
     0
   ) || 0
   const hasRaBillingData = parsedData?.some(d => d.hasRaBillingData) || false
+  const billingType = parsedData?.[0]?.billingType || 'standard'
+  const isSupplyInstallation = billingType === 'supply_installation'
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -473,10 +489,11 @@ function BOQUploadContent() {
                                       <TableRow>
                                         <TableHead className="w-[60px]">S.No</TableHead>
                                         <TableHead>Description</TableHead>
-                                        <TableHead>Location</TableHead>
+                                        {!isSupplyInstallation && <TableHead>Location</TableHead>}
                                         <TableHead>Unit</TableHead>
+                                        {isSupplyInstallation && <TableHead>Qty Ext</TableHead>}
                                         <TableHead className="text-right">Quantity</TableHead>
-                                        {hasRaBillingData && (
+                                        {hasRaBillingData && !isSupplyInstallation && (
                                           <>
                                             <TableHead className="text-right">Rate</TableHead>
                                             <TableHead className="text-right">Total Amt</TableHead>
@@ -485,6 +502,18 @@ function BOQUploadContent() {
                                             <TableHead className="text-right">Actual Qty</TableHead>
                                             <TableHead className="text-right">Actual Amt</TableHead>
                                             <TableHead className="text-right">Actual w/ GST</TableHead>
+                                          </>
+                                        )}
+                                        {isSupplyInstallation && (
+                                          <>
+                                            <TableHead className="text-right">Supply Rate</TableHead>
+                                            <TableHead className="text-right">Install Rate</TableHead>
+                                            <TableHead className="text-right">Supply Amt</TableHead>
+                                            <TableHead className="text-right">Install Amt</TableHead>
+                                            <TableHead className="text-right">Actual Qty</TableHead>
+                                            <TableHead className="text-right">Actual Supply</TableHead>
+                                            <TableHead className="text-right">Actual Install</TableHead>
+                                            <TableHead className="text-right">Actual Total</TableHead>
                                           </>
                                         )}
                                       </TableRow>
@@ -500,14 +529,19 @@ function BOQUploadContent() {
                                               {item.description}
                                             </p>
                                           </TableCell>
-                                          <TableCell className="text-sm text-slate-500">
-                                            {item.location || '-'}
-                                          </TableCell>
+                                          {!isSupplyInstallation && (
+                                            <TableCell className="text-sm text-slate-500">
+                                              {item.location || '-'}
+                                            </TableCell>
+                                          )}
                                           <TableCell>{item.unit || '-'}</TableCell>
+                                          {isSupplyInstallation && (
+                                            <TableCell className="text-sm">{item.qtyExt || '-'}</TableCell>
+                                          )}
                                           <TableCell className="text-right">
                                             {item.quantity || '-'}
                                           </TableCell>
-                                          {hasRaBillingData && (
+                                          {hasRaBillingData && !isSupplyInstallation && (
                                             <>
                                               <TableCell className="text-right">{item.rate ?? '-'}</TableCell>
                                               <TableCell className="text-right">{item.totalAmount ?? '-'}</TableCell>
@@ -518,11 +552,23 @@ function BOQUploadContent() {
                                               <TableCell className="text-right">{item.actualAmountWithGst ?? '-'}</TableCell>
                                             </>
                                           )}
+                                          {isSupplyInstallation && (
+                                            <>
+                                              <TableCell className="text-right">{item.supplyRate ?? '-'}</TableCell>
+                                              <TableCell className="text-right">{item.installationRate ?? '-'}</TableCell>
+                                              <TableCell className="text-right">{item.supplyAmount ?? '-'}</TableCell>
+                                              <TableCell className="text-right">{item.installationAmount ?? '-'}</TableCell>
+                                              <TableCell className="text-right">{item.actualQuantity ?? '-'}</TableCell>
+                                              <TableCell className="text-right">{item.actualSupplyAmount ?? '-'}</TableCell>
+                                              <TableCell className="text-right">{item.actualInstallationAmount ?? '-'}</TableCell>
+                                              <TableCell className="text-right">{item.actualTotalAmount ?? '-'}</TableCell>
+                                            </>
+                                          )}
                                         </TableRow>
                                       ))}
                                       {headline.lineItems.length > 5 && (
                                         <TableRow>
-                                          <TableCell colSpan={hasRaBillingData ? 12 : 5} className="text-center text-slate-500">
+                                          <TableCell colSpan={isSupplyInstallation ? 13 : (hasRaBillingData ? 12 : 5)} className="text-center text-slate-500">
                                             ... and {headline.lineItems.length - 5} more items
                                           </TableCell>
                                         </TableRow>

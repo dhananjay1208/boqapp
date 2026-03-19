@@ -75,6 +75,7 @@ import {
   X,
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
+import * as XLSX_STYLE from 'xlsx-js-style'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -1439,26 +1440,42 @@ export default function MaterialGRNPage() {
       return `${d.getDate().toString().padStart(2, '0')}-${months[d.getMonth()]}-${d.getFullYear()}`
     })
 
+    const totalCols = 5 + uniqueDates.length + 3 // fixed + dates + compliance
+
     // Build the worksheet data as array of arrays
     const wsData: any[][] = []
 
-    // Row 0: MIR references (blank for first 5 columns, then MIR 1, MIR 2, etc., then blank for compliance)
-    const row0 = ['', '', '', '', '']
-    mirReferences.forEach(mir => row0.push(mir))
-    row0.push('', '', '') // DC, Test Cert, TDS columns
-    wsData.push(row0)
+    // Row 0: Title row - "MATERIAL INSPECTION REPORT"
+    const titleRow: any[] = ['MATERIAL INSPECTION REPORT']
+    for (let i = 1; i < totalCols; i++) titleRow.push('')
+    wsData.push(titleRow)
 
-    // Row 1: Headers
-    const row1 = ['Invoice no.', 'Date', 'Description', 'Qty', 'Unit']
-    formattedDates.forEach(date => row1.push(date))
-    row1.push('DC', 'TEST CERTIFICATE', 'TDS')
-    wsData.push(row1)
+    // Row 1: Site info row
+    const exportDate = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+    const siteInfoRow: any[] = [`Site: ${siteName}          Date: ${exportDate}`]
+    for (let i = 1; i < totalCols; i++) siteInfoRow.push('')
+    wsData.push(siteInfoRow)
+
+    // Row 2: MIR references (blank for first 5 columns, then MIR 1, MIR 2, etc., then blank for compliance)
+    const row2 = ['', '', '', '', '']
+    mirReferences.forEach(mir => row2.push(mir))
+    row2.push('', '', '') // DC, Test Cert, TDS columns
+    wsData.push(row2)
+
+    // Row 3: Column Headers
+    const row3 = ['Invoice no.', 'Date', 'Description', 'Qty', 'Unit']
+    formattedDates.forEach(date => row3.push(date))
+    row3.push('DC', 'TEST CERTIFICATE', 'TDS')
+    wsData.push(row3)
 
     // Create a map of date to column index
     const dateColumnMap = new Map<string, number>()
     uniqueDates.forEach((date, idx) => {
-      dateColumnMap.set(date, 5 + idx) // Starting at column index 5 (after Invoice, Date, Description, Qty, Unit)
+      dateColumnMap.set(date, 5 + idx)
     })
+
+    // Track invoice boundaries for grouping borders
+    const invoiceBoundaryRows: number[] = []
 
     // Data rows - grouped by invoice
     invoiceList.forEach(invoice => {
@@ -1513,35 +1530,151 @@ export default function MaterialGRNPage() {
 
         wsData.push(row)
       })
+
+      // Track the last row of each invoice group
+      invoiceBoundaryRows.push(wsData.length - 1)
     })
 
-    // Create workbook and worksheet
-    const wb = XLSX.utils.book_new()
-    const ws = XLSX.utils.aoa_to_sheet(wsData)
+    // Create workbook and worksheet using xlsx-js-style
+    const wb = XLSX_STYLE.utils.book_new()
+    const ws = XLSX_STYLE.utils.aoa_to_sheet(wsData)
 
-    // Set column widths
-    const colWidths = [
-      { wch: 15 },  // Invoice no.
-      { wch: 12 },  // Date
-      { wch: 35 },  // Description
-      { wch: 10 },  // Qty
-      { wch: 8 },   // Unit
+    // --- Merge cells ---
+    ws['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: totalCols - 1 } }, // Title row
+      { s: { r: 1, c: 0 }, e: { r: 1, c: totalCols - 1 } }, // Site info row
     ]
-    // Date columns
-    uniqueDates.forEach(() => colWidths.push({ wch: 12 }))
-    // Compliance columns
-    colWidths.push({ wch: 6 })   // DC
-    colWidths.push({ wch: 16 })  // TEST CERTIFICATE
-    colWidths.push({ wch: 6 })   // TDS
 
+    // --- Styles ---
+    const thinBorder = { style: 'thin', color: { rgb: 'CBD5E1' } }
+    const mediumBorder = { style: 'medium', color: { rgb: '334155' } }
+    const allThinBorders = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder }
+    const allMediumBottomBorders = { top: thinBorder, bottom: mediumBorder, left: thinBorder, right: thinBorder }
+
+    // Style helper to get cell ref
+    const getCellRef = (r: number, c: number) => XLSX_STYLE.utils.encode_cell({ r, c })
+
+    // Ensure all cells exist and apply styles
+    for (let r = 0; r < wsData.length; r++) {
+      for (let c = 0; c < totalCols; c++) {
+        const ref = getCellRef(r, c)
+        if (!ws[ref]) ws[ref] = { v: '', t: 's' }
+
+        if (r === 0) {
+          // Row 0: Title
+          ws[ref].s = {
+            font: { bold: true, sz: 14, color: { rgb: 'FFFFFF' } },
+            fill: { patternType: 'solid', fgColor: { rgb: '334155' } },
+            alignment: { horizontal: 'center', vertical: 'center' },
+            border: allThinBorders,
+          }
+        } else if (r === 1) {
+          // Row 1: Site info
+          ws[ref].s = {
+            font: { bold: true, sz: 11, color: { rgb: '1E293B' } },
+            fill: { patternType: 'solid', fgColor: { rgb: 'F1F5F9' } },
+            alignment: { horizontal: 'left', vertical: 'center' },
+            border: allThinBorders,
+          }
+        } else if (r === 2) {
+          // Row 2: MIR references
+          ws[ref].s = {
+            font: { bold: true, sz: 10, color: { rgb: '1E40AF' } },
+            fill: { patternType: 'solid', fgColor: { rgb: 'DBEAFE' } },
+            alignment: { horizontal: 'center', vertical: 'center' },
+            border: allThinBorders,
+          }
+        } else if (r === 3) {
+          // Row 3: Column headers
+          const isDateCol = c >= 5 && c < 5 + uniqueDates.length
+          ws[ref].s = {
+            font: { bold: true, sz: 10, color: { rgb: 'FFFFFF' } },
+            fill: { patternType: 'solid', fgColor: { rgb: isDateCol ? '475569' : '334155' } },
+            alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+            border: allMediumBottomBorders,
+          }
+        } else {
+          // Data rows (r >= 4)
+          const isEvenRow = (r - 4) % 2 === 0
+          const isComplianceCol = c >= 5 + uniqueDates.length
+          const cellValue = ws[ref].v
+
+          // Base style for data cells
+          const cellStyle: any = {
+            font: { sz: 9, color: { rgb: '1E293B' } },
+            fill: { patternType: 'solid', fgColor: { rgb: isEvenRow ? 'F8FAFC' : 'FFFFFF' } },
+            alignment: { vertical: 'center' },
+            border: allThinBorders,
+          }
+
+          // Column-specific alignment
+          if (c === 0 || c === 1) {
+            cellStyle.alignment.horizontal = 'left'
+          } else if (c === 2) {
+            cellStyle.alignment.horizontal = 'left'
+            cellStyle.alignment.wrapText = true
+          } else {
+            cellStyle.alignment.horizontal = 'center'
+          }
+
+          // Compliance cell coloring
+          if (isComplianceCol && typeof cellValue === 'string') {
+            if (cellValue === 'Y') {
+              cellStyle.fill = { patternType: 'solid', fgColor: { rgb: 'DCFCE7' } }
+              cellStyle.font = { sz: 9, bold: true, color: { rgb: '166534' } }
+            } else if (cellValue === 'N') {
+              cellStyle.fill = { patternType: 'solid', fgColor: { rgb: 'FEE2E2' } }
+              cellStyle.font = { sz: 9, bold: true, color: { rgb: '991B1B' } }
+            } else if (cellValue === 'NA') {
+              cellStyle.fill = { patternType: 'solid', fgColor: { rgb: 'F1F5F9' } }
+              cellStyle.font = { sz: 9, color: { rgb: '64748B' } }
+            }
+          }
+
+          // Invoice grouping: darker bottom border at invoice boundaries
+          if (invoiceBoundaryRows.includes(r)) {
+            cellStyle.border = {
+              ...allThinBorders,
+              bottom: { style: 'thin', color: { rgb: '94A3B8' } },
+            }
+          }
+
+          ws[ref].s = cellStyle
+        }
+      }
+    }
+
+    // --- Column widths ---
+    const colWidths = [
+      { wch: 18 },  // Invoice no.
+      { wch: 14 },  // Date
+      { wch: 38 },  // Description
+      { wch: 10 },  // Qty
+      { wch: 10 },  // Unit
+    ]
+    uniqueDates.forEach(() => colWidths.push({ wch: 14 }))
+    colWidths.push({ wch: 8 })   // DC
+    colWidths.push({ wch: 18 })  // TEST CERTIFICATE
+    colWidths.push({ wch: 8 })   // TDS
     ws['!cols'] = colWidths
 
-    XLSX.utils.book_append_sheet(wb, ws, 'MIR Overview')
+    // --- Row heights ---
+    ws['!rows'] = [
+      { hpt: 30 },  // Title row
+      { hpt: 22 },  // Site info row
+      { hpt: 20 },  // MIR references row
+      { hpt: 28 },  // Headers row
+    ]
+
+    // --- Freeze panes: freeze below row 4 (title + site + MIR refs + headers) ---
+    ws['!freeze'] = { xSplit: 0, ySplit: 4, topLeftCell: 'A5' }
+
+    XLSX_STYLE.utils.book_append_sheet(wb, ws, 'MIR Overview')
 
     const dateStr = new Date().toISOString().split('T')[0]
     const filename = `MIR_Overview_${siteName.replace(/[^a-zA-Z0-9]/g, '_')}_${dateStr}.xlsx`
 
-    XLSX.writeFile(wb, filename)
+    XLSX_STYLE.writeFile(wb, filename)
     toast.success('MIR Overview exported successfully')
   }
 

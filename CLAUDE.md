@@ -87,15 +87,19 @@ app/
 - Extended BOQ view with billing columns (rate, amounts, GST, actuals)
 - Site -> Package cascading selectors
 - Summary cards: Total BOQ Amount, Total Actual Amount, Billing %, Items with Actuals
-- Table grouped by headline (collapsible sections) with 12 columns:
-  - S.No, Description, Location, Unit, Quantity, Rate, Total Amount, GST Amount, Total w/ GST, Actual Qty, Actual Amount, Actual Amt w/ GST
-- Headline subtotals and grand total row
-- Export to Excel
-- Data comes from 7 additional columns on `boq_line_items`:
-  - `rate`, `total_amount`, `gst_amount`, `total_amount_with_gst` (BOQ billing)
-  - `actual_quantity`, `actual_amount`, `actual_amount_with_gst` (actuals from Excel import)
+- **Two billing types** based on `packages.billing_type`:
+  - **Standard**: 12 columns — S.No, Description, Location, Unit, Quantity, Rate, Total Amount, GST Amount, Total w/ GST, Actual Qty, Actual Amount, Actual Amt w/ GST
+  - **Supply & Installation (S&I)**: 13 columns — S.No, Description, Unit, Qty Ext, Quantity, Supply Rate, Install Rate, Supply Amt, Install Amt, Actual Qty, Actual Supply, Actual Install, Actual Total
+- Description column uses `max-w-[350px]` with `whitespace-normal break-words` to prevent horizontal scrollbar overflow on long descriptions
+- Headline subtotals and grand total row (adapts to billing type)
+- Export to Excel (adapts columns/headers to billing type)
+- Data comes from columns on `boq_line_items`:
+  - Standard: `rate`, `total_amount`, `gst_amount`, `total_amount_with_gst`, `actual_quantity`, `actual_amount`, `actual_amount_with_gst`
+  - S&I: `qty_ext`, `supply_rate`, `installation_rate`, `supply_amount`, `installation_amount`, `actual_supply_amount`, `actual_installation_amount`, `actual_total_amount`
 - **Excel Parser** (`src/lib/excel-parser.ts`):
+  - Detects billing type: S&I templates detected by SUPPLY/INSTALLATION header keywords
   - Detects extended 12-column template dynamically by scanning header keywords (RATE, AMOUNT, GST, ACTUAL)
+  - Supports column offset detection (S.No may be in column A or B)
   - Supports multi-row headers (merges header row + continuation row)
   - Handles three BOQ Excel formats:
     - **Standard** (LA CIVIL WORK): Whole-number S.No = headline, decimal S.No (1.1, 1.2) = line items
@@ -120,11 +124,13 @@ app/
   - Auto-creates document placeholders for imported data on first access
 - **Export Reports**:
   - **Export Report**: Standard GRN report with all details
-  - **MIR Overview**: Excel export with materials grouped by GRN date
+  - **MIR Overview**: Styled Excel export (via `xlsx-js-style`) with materials grouped by GRN date
+    - Title row "MATERIAL INSPECTION REPORT" and site info row at top
     - MIR references (MIR 1, MIR 2, etc.) based on unique GRN dates, ascending by date (MIR 1 = earliest)
     - Column order is descending (latest date first), but MIR numbers are ascending by date
     - Quantity distribution across dates
     - Compliance status (Y/N/NA) for DC, Test Cert, TDS
+    - Styled with header colors, borders, invoice grouping borders
 
 ### 4. Inventory (`/inventory`)
 - Aggregated material stock from GRN entries
@@ -234,7 +240,7 @@ Reports module with expandable submenu:
 
 ### Core Tables
 - `sites` - Construction sites
-- `packages` - BOQ packages per site
+- `packages` - BOQ packages per site (has `billing_type`: 'standard' | 'supply_installation')
 - `boq_headlines` - BOQ section headers
 - `boq_line_items` - BOQ line items
 - `materials` - Materials per line item
@@ -518,6 +524,7 @@ Key migrations:
 - `022_grn_invoice_date.sql` - Add invoice_date column to grn_invoices
 - `023_equipment_rates.sql` - Equipment rates table (supplier + equipment + rate), add supplier columns to expense_equipment
 - `024_ra_billing_columns.sql` - Add 7 RA Billing columns to boq_line_items (rate, total_amount, gst_amount, total_amount_with_gst, actual_quantity, actual_amount, actual_amount_with_gst)
+- `025_supply_installation_support.sql` - Add `billing_type` to packages, add 8 S&I columns to boq_line_items (qty_ext, supply_rate, installation_rate, supply_amount, installation_amount, actual_supply_amount, actual_installation_amount, actual_total_amount)
 
 ## Import/Utility Scripts
 
