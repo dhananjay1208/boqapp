@@ -48,6 +48,7 @@ app/
 │   │   └── ui/                 # Shadcn UI components
 │   ├── lib/
 │   │   ├── supabase.ts         # Supabase client
+│   │   ├── excel-parser.ts     # BOQ Excel import parser (multi-format)
 │   │   └── utils.ts            # Utility functions (cn)
 │   └── types/
 │       └── database.ts         # TypeScript types
@@ -93,10 +94,16 @@ app/
 - Data comes from 7 additional columns on `boq_line_items`:
   - `rate`, `total_amount`, `gst_amount`, `total_amount_with_gst` (BOQ billing)
   - `actual_quantity`, `actual_amount`, `actual_amount_with_gst` (actuals from Excel import)
-- **Excel Parser**: Detects extended 12-column template (column F header contains "RATE")
-  - Parses columns F-L for billing data
-  - Rows without S.No but with data grouped under auto-generated "Miscellaneous" headline
-  - Rows that look like totals (description contains "total"/"sub total"/"grand total") are skipped
+- **Excel Parser** (`src/lib/excel-parser.ts`):
+  - Detects extended 12-column template dynamically by scanning header keywords (RATE, AMOUNT, GST, ACTUAL)
+  - Supports multi-row headers (merges header row + continuation row)
+  - Handles three BOQ Excel formats:
+    - **Standard** (LA CIVIL WORK): Whole-number S.No = headline, decimal S.No (1.1, 1.2) = line items
+    - **Letter sub-items** (LA PLANTATION): Letter-based S.No like "7.a", "7.b" = line items under parent headline
+    - **Landscape** (LA LANDSCAPE): Headline rows have S.No but no data; actual data rows have **no S.No** — parser attaches these to the current headline
+  - Rows without S.No: if a headline is active, attached as line items; otherwise grouped into orphan sections (e.g., "NT ITEMS", "Miscellaneous")
+  - Total rows (description or S.No contains "total") are skipped and close the current headline
+  - Orphan sections get auto-generated headline numbers after the last real headline
 
 ### 3. Material GRN (`/material-grn`)
 - Invoice-based goods receipt notes
