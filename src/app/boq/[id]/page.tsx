@@ -315,7 +315,7 @@ export default function BOQDetailPage() {
           setWorkstationConsumptions(transformedConsumptions)
         }
 
-        // Fetch workstation progress (for Upto Date quantity calculation)
+        // Fetch workstation progress (fallback source for Upto Date when no approved JMR exists)
         const { data: progressData, error: progressError } = await supabase
           .from('workstation_boq_progress')
           .select('boq_line_item_id, quantity')
@@ -323,15 +323,42 @@ export default function BOQDetailPage() {
 
         if (progressError) {
           console.error('Error fetching progress data:', progressError)
-        } else {
-          // Aggregate quantities by line item (sum across all workstations)
-          const progressMap: Record<string, number> = {}
-          progressData?.forEach(entry => {
-            const lineItemId = entry.boq_line_item_id
-            progressMap[lineItemId] = (progressMap[lineItemId] || 0) + (entry.quantity || 0)
-          })
-          setProgressByLineItem(progressMap)
         }
+
+        // Fetch approved JMRs (primary source for Upto Date when present)
+        const { data: jmrData, error: jmrError } = await supabase
+          .from('boq_jmr')
+          .select('line_item_id, approved_quantity')
+          .in('line_item_id', lineItemIds)
+          .eq('status', 'approved')
+
+        if (jmrError) {
+          console.error('Error fetching JMR approved quantities:', jmrError)
+        }
+
+        // Aggregate workstation quantities per line item
+        const workstationMap: Record<string, number> = {}
+        progressData?.forEach(entry => {
+          const id = entry.boq_line_item_id
+          workstationMap[id] = (workstationMap[id] || 0) + (entry.quantity || 0)
+        })
+
+        // Aggregate approved JMR quantities per line item; track presence separately so
+        // a line item with approved JMRs but null/zero approved_quantity still shadows workstation
+        const jmrApprovedSum: Record<string, number> = {}
+        const hasApprovedJmr: Record<string, boolean> = {}
+        jmrData?.forEach(entry => {
+          const id = entry.line_item_id
+          hasApprovedJmr[id] = true
+          jmrApprovedSum[id] = (jmrApprovedSum[id] || 0) + (entry.approved_quantity || 0)
+        })
+
+        // Final Upto Date: JMR approved sum if any approved JMR exists, else workstation sum
+        const progressMap: Record<string, number> = {}
+        lineItemIds.forEach(id => {
+          progressMap[id] = hasApprovedJmr[id] ? (jmrApprovedSum[id] || 0) : (workstationMap[id] || 0)
+        })
+        setProgressByLineItem(progressMap)
       }
     } catch (error) {
       console.error('Error fetching data:', error)
