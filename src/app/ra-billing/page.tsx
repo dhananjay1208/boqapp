@@ -85,6 +85,15 @@ interface Headline {
   line_items: LineItem[]
 }
 
+interface PackageSummary {
+  packageId: string
+  packageName: string
+  billingType: 'standard' | 'supply_installation'
+  boqAmount: number
+  actualAmount: number
+  actualWithGst: number
+}
+
 function formatAmount(value: number | null): string {
   if (value === null || value === undefined) return '-'
   return value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -103,6 +112,8 @@ export default function RABillingPage() {
   const [headlines, setHeadlines] = useState<Headline[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedHeadlines, setExpandedHeadlines] = useState<Set<string>>(new Set())
+  const [siteSummary, setSiteSummary] = useState<PackageSummary[]>([])
+  const [summaryLoading, setSummaryLoading] = useState(false)
 
   useEffect(() => {
     fetchSites()
@@ -111,8 +122,11 @@ export default function RABillingPage() {
   useEffect(() => {
     if (selectedSiteId) {
       fetchPackages()
+      fetchSiteSummary()
       setSelectedPackageId('')
       setHeadlines([])
+    } else {
+      setSiteSummary([])
     }
   }, [selectedSiteId])
 
@@ -154,6 +168,79 @@ export default function RABillingPage() {
       }
     } catch (error) {
       toast.error('Failed to load packages')
+    }
+  }
+
+  async function fetchSiteSummary() {
+    setSummaryLoading(true)
+    try {
+      const { data, error } = await supabase
+        .from('packages')
+        .select(`
+          id, name, billing_type,
+          boq_headlines(
+            id,
+            line_items:boq_line_items(
+              total_amount, actual_amount, actual_amount_with_gst,
+              supply_amount, installation_amount,
+              actual_supply_amount, actual_installation_amount, actual_total_amount
+            )
+          )
+        `)
+        .eq('site_id', selectedSiteId)
+        .order('name')
+
+      if (error) throw error
+
+      type SummaryLi = {
+        total_amount: number | null
+        actual_amount: number | null
+        actual_amount_with_gst: number | null
+        supply_amount: number | null
+        installation_amount: number | null
+        actual_supply_amount: number | null
+        actual_installation_amount: number | null
+        actual_total_amount: number | null
+      }
+      type SummaryPkg = {
+        id: string
+        name: string
+        billing_type: 'standard' | 'supply_installation'
+        boq_headlines: { line_items: SummaryLi[] }[] | null
+      }
+      const sumNum = (n: number | null | undefined) => n || 0
+
+      const summary: PackageSummary[] = ((data || []) as SummaryPkg[]).map((pkg) => {
+        const lineItems: SummaryLi[] = (pkg.boq_headlines || []).flatMap((h) => h.line_items || [])
+        const isSI = pkg.billing_type === 'supply_installation'
+
+        const boqAmount = isSI
+          ? lineItems.reduce((s, li) => s + sumNum(li.supply_amount) + sumNum(li.installation_amount), 0)
+          : lineItems.reduce((s, li) => s + sumNum(li.total_amount), 0)
+
+        const actualAmount = isSI
+          ? lineItems.reduce((s, li) => s + sumNum(li.actual_supply_amount) + sumNum(li.actual_installation_amount), 0)
+          : lineItems.reduce((s, li) => s + sumNum(li.actual_amount), 0)
+
+        const actualWithGst = isSI
+          ? lineItems.reduce((s, li) => s + (li.actual_total_amount ?? (sumNum(li.actual_supply_amount) + sumNum(li.actual_installation_amount))), 0)
+          : lineItems.reduce((s, li) => s + sumNum(li.actual_amount_with_gst), 0)
+
+        return {
+          packageId: pkg.id,
+          packageName: pkg.name,
+          billingType: pkg.billing_type,
+          boqAmount,
+          actualAmount,
+          actualWithGst,
+        }
+      })
+
+      setSiteSummary(summary)
+    } catch {
+      toast.error('Failed to load site summary')
+    } finally {
+      setSummaryLoading(false)
     }
   }
 
@@ -353,6 +440,63 @@ export default function RABillingPage() {
             </div>
           </CardHeader>
         </Card>
+
+        {/* Site Summary */}
+        {selectedSiteId && (summaryLoading || siteSummary.length > 0) && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">RA Billing Site Summary</CardTitle>
+              <CardDescription>{sites.find(s => s.id === selectedSiteId)?.name || ''}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {summaryLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="h-6 w-6 animate-spin text-blue-600" />
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Package</TableHead>
+                        <TableHead className="text-right whitespace-nowrap">BOQ amount</TableHead>
+                        <TableHead className="text-right whitespace-nowrap">Actual amount</TableHead>
+                        <TableHead className="text-right whitespace-nowrap">Actual with GST</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {siteSummary.map((row) => (
+                        <TableRow key={row.packageId}>
+                          <TableCell>
+                            <div className="font-medium">{row.packageName}</div>
+                            {row.billingType === 'supply_installation' && (
+                              <div className="text-xs text-slate-500">(Supply &amp; Installation)</div>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right">{formatAmount(row.boqAmount)}</TableCell>
+                          <TableCell className="text-right">{formatAmount(row.actualAmount)}</TableCell>
+                          <TableCell className="text-right">{formatAmount(row.actualWithGst)}</TableCell>
+                        </TableRow>
+                      ))}
+                      <TableRow className="bg-slate-50 font-medium">
+                        <TableCell>Total</TableCell>
+                        <TableCell className="text-right">
+                          {formatAmount(siteSummary.reduce((s, r) => s + r.boqAmount, 0))}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {formatAmount(siteSummary.reduce((s, r) => s + r.actualAmount, 0))}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {formatAmount(siteSummary.reduce((s, r) => s + r.actualWithGst, 0))}
+                        </TableCell>
+                      </TableRow>
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Summary Cards */}
         {selectedPackageId && !loading && headlines.length > 0 && (
