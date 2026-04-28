@@ -678,16 +678,23 @@ export default function MaterialGRNPage() {
 
         // Insert new line items
         for (const item of lineItems) {
+          const qty = parseFloat(item.quantity)
+          const rate = parseFloat(item.rate)
+          const gst = parseFloat(item.gst_rate)
+          const amountExcl = qty * rate
+          const amountIncl = amountExcl * (1 + gst / 100)
           const { data: newLineItem, error: lineError } = await supabase
             .from('grn_line_items')
             .insert({
               grn_invoice_id: editingInvoice.id,
               material_id: item.material_id,
               material_name: item.material_name,
-              quantity: parseFloat(item.quantity),
+              quantity: qty,
               unit: item.unit,
-              rate: parseFloat(item.rate),
-              gst_rate: parseFloat(item.gst_rate),
+              rate: rate,
+              gst_rate: gst,
+              amount_without_gst: amountExcl,
+              amount_with_gst: amountIncl,
               notes: item.notes.trim() || null,
             })
             .select()
@@ -735,16 +742,23 @@ export default function MaterialGRNPage() {
 
         // Create line items
         for (const item of lineItems) {
+          const qty = parseFloat(item.quantity)
+          const rate = parseFloat(item.rate)
+          const gst = parseFloat(item.gst_rate)
+          const amountExcl = qty * rate
+          const amountIncl = amountExcl * (1 + gst / 100)
           const { data: newLineItem, error: lineError } = await supabase
             .from('grn_line_items')
             .insert({
               grn_invoice_id: newInvoice.id,
               material_id: item.material_id,
               material_name: item.material_name,
-              quantity: parseFloat(item.quantity),
+              quantity: qty,
               unit: item.unit,
-              rate: parseFloat(item.rate),
-              gst_rate: parseFloat(item.gst_rate),
+              rate: rate,
+              gst_rate: gst,
+              amount_without_gst: amountExcl,
+              amount_with_gst: amountIncl,
               notes: item.notes.trim() || null,
             })
             .select()
