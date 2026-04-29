@@ -59,6 +59,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import { computeUptoDateMap } from '@/lib/upto-date'
 import { toast } from 'sonner'
 import BOQChecklistsTab from '@/components/boq/boq-checklists-tab'
 import BOQJMRTab from '@/components/boq/boq-jmr-tab'
@@ -315,49 +316,8 @@ export default function BOQDetailPage() {
           setWorkstationConsumptions(transformedConsumptions)
         }
 
-        // Fetch workstation progress (fallback source for Upto Date when no approved JMR exists)
-        const { data: progressData, error: progressError } = await supabase
-          .from('workstation_boq_progress')
-          .select('boq_line_item_id, quantity')
-          .in('boq_line_item_id', lineItemIds)
-
-        if (progressError) {
-          console.error('Error fetching progress data:', progressError)
-        }
-
-        // Fetch approved JMRs (primary source for Upto Date when present)
-        const { data: jmrData, error: jmrError } = await supabase
-          .from('boq_jmr')
-          .select('line_item_id, approved_quantity')
-          .in('line_item_id', lineItemIds)
-          .eq('status', 'approved')
-
-        if (jmrError) {
-          console.error('Error fetching JMR approved quantities:', jmrError)
-        }
-
-        // Aggregate workstation quantities per line item
-        const workstationMap: Record<string, number> = {}
-        progressData?.forEach(entry => {
-          const id = entry.boq_line_item_id
-          workstationMap[id] = (workstationMap[id] || 0) + (entry.quantity || 0)
-        })
-
-        // Aggregate approved JMR quantities per line item; track presence separately so
-        // a line item with approved JMRs but null/zero approved_quantity still shadows workstation
-        const jmrApprovedSum: Record<string, number> = {}
-        const hasApprovedJmr: Record<string, boolean> = {}
-        jmrData?.forEach(entry => {
-          const id = entry.line_item_id
-          hasApprovedJmr[id] = true
-          jmrApprovedSum[id] = (jmrApprovedSum[id] || 0) + (entry.approved_quantity || 0)
-        })
-
-        // Final Upto Date: JMR approved sum if any approved JMR exists, else workstation sum
-        const progressMap: Record<string, number> = {}
-        lineItemIds.forEach(id => {
-          progressMap[id] = hasApprovedJmr[id] ? (jmrApprovedSum[id] || 0) : (workstationMap[id] || 0)
-        })
+        // Compute Upto Date per line item (JMR-approved if any, else workstation sum)
+        const progressMap = await computeUptoDateMap(lineItemIds)
         setProgressByLineItem(progressMap)
       }
     } catch (error) {
