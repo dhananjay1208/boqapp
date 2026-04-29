@@ -37,6 +37,7 @@ import {
   ClipboardList,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { computeUptoDateMap } from '@/lib/upto-date'
 import { toast } from 'sonner'
 import * as XLSX from 'xlsx'
 
@@ -50,6 +51,7 @@ interface PackageData {
   name: string
   site_id: string
   billing_type: 'standard' | 'supply_installation'
+  actual_source: 'template' | 'execution'
 }
 
 interface LineItem {
@@ -89,6 +91,7 @@ interface PackageSummary {
   packageId: string
   packageName: string
   billingType: 'standard' | 'supply_installation'
+  actualSource: 'template' | 'execution'
   boqAmount: number
   actualAmount: number
   actualWithGst: number
@@ -102,6 +105,39 @@ function formatAmount(value: number | null): string {
 function formatQty(value: number | null): string {
   if (value === null || value === undefined) return '-'
   return value.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 3 })
+}
+
+// Compute the "execution" actuals for a single line item: Actual Qty = Upto Date,
+// Actual Amounts = quantity × rate. GST percentage on Standard lines is derived
+// from the BOQ row (gst_amount / total_amount) when total_amount > 0.
+function computeExecutionActuals(
+  li: Pick<LineItem, 'rate' | 'total_amount' | 'gst_amount' | 'supply_rate' | 'installation_rate'>,
+  uptoQty: number,
+  isSI: boolean
+) {
+  if (isSI) {
+    const supply = uptoQty * (li.supply_rate || 0)
+    const install = uptoQty * (li.installation_rate || 0)
+    return {
+      actualQty: uptoQty,
+      actualAmount: supply + install,
+      actualWithGst: supply + install,
+      actualSupplyAmount: supply,
+      actualInstallationAmount: install,
+      actualTotalAmount: supply + install,
+    }
+  }
+  const amount = uptoQty * (li.rate || 0)
+  const gstPct =
+    li.total_amount && li.total_amount > 0 ? (li.gst_amount || 0) / li.total_amount : 0
+  return {
+    actualQty: uptoQty,
+    actualAmount: amount,
+    actualWithGst: amount * (1 + gstPct),
+    actualSupplyAmount: 0,
+    actualInstallationAmount: 0,
+    actualTotalAmount: 0,
+  }
 }
 
 export default function RABillingPage() {
@@ -158,7 +194,7 @@ export default function RABillingPage() {
     try {
       const { data, error } = await supabase
         .from('packages')
-        .select('id, name, site_id, billing_type')
+        .select('id, name, site_id, billing_type, actual_source')
         .eq('site_id', selectedSiteId)
         .order('name')
       if (error) throw error
@@ -166,7 +202,7 @@ export default function RABillingPage() {
       if (data && data.length > 0) {
         setSelectedPackageId(data[0].id)
       }
-    } catch (error) {
+    } catch {
       toast.error('Failed to load packages')
     }
   }
@@ -177,11 +213,14 @@ export default function RABillingPage() {
       const { data, error } = await supabase
         .from('packages')
         .select(`
-          id, name, billing_type,
+          id, name, billing_type, actual_source,
           boq_headlines(
             id,
             line_items:boq_line_items(
-              total_amount, actual_amount, actual_amount_with_gst,
+              id,
+              rate, total_amount, gst_amount,
+              supply_rate, installation_rate,
+              actual_amount, actual_amount_with_gst,
               supply_amount, installation_amount,
               actual_supply_amount, actual_installation_amount, actual_total_amount
             )
@@ -193,7 +232,12 @@ export default function RABillingPage() {
       if (error) throw error
 
       type SummaryLi = {
+        id: string
+        rate: number | null
         total_amount: number | null
+        gst_amount: number | null
+        supply_rate: number | null
+        installation_rate: number | null
         actual_amount: number | null
         actual_amount_with_gst: number | null
         supply_amount: number | null
@@ -206,11 +250,19 @@ export default function RABillingPage() {
         id: string
         name: string
         billing_type: 'standard' | 'supply_installation'
+        actual_source: 'template' | 'execution'
         boq_headlines: { line_items: SummaryLi[] }[] | null
       }
       const sumNum = (n: number | null | undefined) => n || 0
+      const pkgs = (data || []) as SummaryPkg[]
 
-      const summary: PackageSummary[] = ((data || []) as SummaryPkg[]).map((pkg) => {
+      // Single batched Upto Date lookup across every line item in the site
+      const allIds = pkgs.flatMap((p) =>
+        (p.boq_headlines || []).flatMap((h) => (h.line_items || []).map((li) => li.id))
+      )
+      const uptoMap = await computeUptoDateMap(allIds)
+
+      const summary: PackageSummary[] = pkgs.map((pkg) => {
         const lineItems: SummaryLi[] = (pkg.boq_headlines || []).flatMap((h) => h.line_items || [])
         const isSI = pkg.billing_type === 'supply_installation'
 
@@ -218,18 +270,33 @@ export default function RABillingPage() {
           ? lineItems.reduce((s, li) => s + sumNum(li.supply_amount) + sumNum(li.installation_amount), 0)
           : lineItems.reduce((s, li) => s + sumNum(li.total_amount), 0)
 
-        const actualAmount = isSI
-          ? lineItems.reduce((s, li) => s + sumNum(li.actual_supply_amount) + sumNum(li.actual_installation_amount), 0)
-          : lineItems.reduce((s, li) => s + sumNum(li.actual_amount), 0)
+        let actualAmount: number
+        let actualWithGst: number
 
-        const actualWithGst = isSI
-          ? lineItems.reduce((s, li) => s + (li.actual_total_amount ?? (sumNum(li.actual_supply_amount) + sumNum(li.actual_installation_amount))), 0)
-          : lineItems.reduce((s, li) => s + sumNum(li.actual_amount_with_gst), 0)
+        if (pkg.actual_source === 'template') {
+          actualAmount = isSI
+            ? lineItems.reduce((s, li) => s + sumNum(li.actual_supply_amount) + sumNum(li.actual_installation_amount), 0)
+            : lineItems.reduce((s, li) => s + sumNum(li.actual_amount), 0)
+          actualWithGst = isSI
+            ? lineItems.reduce((s, li) => s + (li.actual_total_amount ?? (sumNum(li.actual_supply_amount) + sumNum(li.actual_installation_amount))), 0)
+            : lineItems.reduce((s, li) => s + sumNum(li.actual_amount_with_gst), 0)
+        } else {
+          // Execution: derive actuals from Upto Date × rate
+          actualAmount = lineItems.reduce(
+            (s, li) => s + computeExecutionActuals(li, uptoMap[li.id] || 0, isSI).actualAmount,
+            0
+          )
+          actualWithGst = lineItems.reduce(
+            (s, li) => s + computeExecutionActuals(li, uptoMap[li.id] || 0, isSI).actualWithGst,
+            0
+          )
+        }
 
         return {
           packageId: pkg.id,
           packageName: pkg.name,
           billingType: pkg.billing_type,
+          actualSource: pkg.actual_source,
           boqAmount,
           actualAmount,
           actualWithGst,
@@ -244,7 +311,7 @@ export default function RABillingPage() {
     }
   }
 
-  async function fetchBillingData() {
+  async function fetchBillingData(sourceOverride?: 'template' | 'execution') {
     setLoading(true)
     try {
       const { data, error } = await supabase
@@ -259,17 +326,44 @@ export default function RABillingPage() {
       if (error) throw error
 
       // Sort line items within each headline
-      const sorted = (data || []).map((h: any) => ({
+      const sorted: Headline[] = (data || []).map((h: Headline) => ({
         ...h,
         line_items: (h.line_items || []).sort((a: LineItem, b: LineItem) =>
           parseFloat(a.item_number) - parseFloat(b.item_number)
         ),
       }))
 
+      // When the package's actual source is 'execution', derive Actual Qty / Amounts
+      // from Upto Date (JMR-approved or workstation fallback) instead of the stored
+      // Excel-template values. Mutates line items so all downstream display, subtotals,
+      // grand totals and export read these effective values transparently.
+      const pkg = packages.find((p) => p.id === selectedPackageId)
+      const source = sourceOverride ?? pkg?.actual_source ?? 'execution'
+      const isSI = pkg?.billing_type === 'supply_installation'
+
+      if (source === 'execution') {
+        const allIds = sorted.flatMap((h) => h.line_items.map((li) => li.id))
+        const uptoMap = await computeUptoDateMap(allIds)
+        for (const h of sorted) {
+          for (const li of h.line_items) {
+            const eff = computeExecutionActuals(li, uptoMap[li.id] || 0, isSI)
+            li.actual_quantity = eff.actualQty
+            if (isSI) {
+              li.actual_supply_amount = eff.actualSupplyAmount
+              li.actual_installation_amount = eff.actualInstallationAmount
+              li.actual_total_amount = eff.actualTotalAmount
+            } else {
+              li.actual_amount = eff.actualAmount
+              li.actual_amount_with_gst = eff.actualWithGst
+            }
+          }
+        }
+      }
+
       setHeadlines(sorted)
       // Expand all headlines by default
       setExpandedHeadlines(new Set(sorted.map((h: Headline) => h.id)))
-    } catch (error) {
+    } catch {
       toast.error('Failed to load billing data')
     } finally {
       setLoading(false)
@@ -284,6 +378,32 @@ export default function RABillingPage() {
       newExpanded.add(id)
     }
     setExpandedHeadlines(newExpanded)
+  }
+
+  async function changeActualSource(newSource: 'template' | 'execution') {
+    if (!selectedPackageId) return
+    try {
+      const { error } = await supabase
+        .from('packages')
+        .update({ actual_source: newSource })
+        .eq('id', selectedPackageId)
+      if (error) throw error
+      // Update local packages state so fetchBillingData closes over the new source
+      setPackages((prev) =>
+        prev.map((p) => (p.id === selectedPackageId ? { ...p, actual_source: newSource } : p))
+      )
+      // Refetch both views so they reflect the new source. Pass the source
+      // explicitly to fetchBillingData since the React state update from
+      // setPackages above hasn't been committed yet at this point.
+      await Promise.all([fetchBillingData(newSource), fetchSiteSummary()])
+      toast.success(
+        newSource === 'execution'
+          ? 'Switched to BOQ Management (Upto Date) actuals'
+          : 'Switched to Excel Template actuals'
+      )
+    } catch {
+      toast.error('Failed to change actual source')
+    }
   }
 
   // Determine billing type from selected package
@@ -430,6 +550,19 @@ export default function RABillingPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                <Select
+                  value={selectedPkg?.actual_source ?? 'execution'}
+                  onValueChange={(v) => changeActualSource(v as 'template' | 'execution')}
+                  disabled={!selectedPackageId}
+                >
+                  <SelectTrigger className="w-full sm:w-56" title="Source for Actual Qty">
+                    <SelectValue placeholder="Actual source" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="execution">From BOQ Management (Upto Date)</SelectItem>
+                    <SelectItem value="template">From Excel Template</SelectItem>
+                  </SelectContent>
+                </Select>
                 {headlines.length > 0 && (
                   <Button variant="outline" onClick={exportToExcel}>
                     <Download className="h-4 w-4 mr-2" />
@@ -469,9 +602,10 @@ export default function RABillingPage() {
                         <TableRow key={row.packageId}>
                           <TableCell>
                             <div className="font-medium">{row.packageName}</div>
-                            {row.billingType === 'supply_installation' && (
-                              <div className="text-xs text-slate-500">(Supply &amp; Installation)</div>
-                            )}
+                            <div className="text-xs text-slate-500">
+                              {row.billingType === 'supply_installation' && 'Supply & Installation · '}
+                              {row.actualSource === 'execution' ? 'Actual: Upto Date' : 'Actual: Excel Template'}
+                            </div>
                           </TableCell>
                           <TableCell className="text-right">{formatAmount(row.boqAmount)}</TableCell>
                           <TableCell className="text-right">{formatAmount(row.actualAmount)}</TableCell>
