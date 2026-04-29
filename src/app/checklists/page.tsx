@@ -32,17 +32,20 @@ import {
   FileSpreadsheet,
   ChevronDown,
   ChevronUp,
-  GripVertical,
+  FileText,
+  Printer,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
-import * as XLSX from 'xlsx'
+import { parseChecklistFile, type ParsedChecklistItem } from '@/lib/checklist-parser'
+import { generateChecklistPdf, type ChecklistPdfMetadata } from '@/lib/checklist-pdf'
 
 interface ChecklistTemplate {
   id: string
   name: string
   description: string | null
   notes_template: string | null
+  signatories: string[] | null
   created_at: string
   items?: ChecklistTemplateItem[]
 }
@@ -52,8 +55,18 @@ interface ChecklistTemplateItem {
   template_id: string
   item_no: number
   description: string
+  section: string | null
   sort_order: number
 }
+
+const DEFAULT_SIGNATORIES = [
+  'C&W Representative',
+  'Electrical Representative',
+  'HVAC Representative',
+  'Siemens Representative',
+  'IT Representative',
+  'Ostraca Representative',
+]
 
 export default function ChecklistsPage() {
   const [templates, setTemplates] = useState<ChecklistTemplate[]>([])
@@ -68,14 +81,21 @@ export default function ChecklistsPage() {
   const [formName, setFormName] = useState('')
   const [formDescription, setFormDescription] = useState('')
   const [formNotes, setFormNotes] = useState('')
-  const [formItems, setFormItems] = useState<{ item_no: number; description: string }[]>([
-    { item_no: 1, description: '' },
+  const [formItems, setFormItems] = useState<{ item_no: number; description: string; section: string | null }[]>([
+    { item_no: 1, description: '', section: null },
   ])
+  const [formSignatories, setFormSignatories] = useState<string[]>([...DEFAULT_SIGNATORIES])
 
   // Upload state
-  const [uploadedItems, setUploadedItems] = useState<{ item_no: number; description: string }[]>([])
+  const [uploadedItems, setUploadedItems] = useState<ParsedChecklistItem[]>([])
   const [uploadName, setUploadName] = useState('')
   const [uploadDescription, setUploadDescription] = useState('')
+  const [uploadSignatories, setUploadSignatories] = useState<string[]>([...DEFAULT_SIGNATORIES])
+
+  // Filled-PDF metadata dialog state
+  const [showMetadataDialog, setShowMetadataDialog] = useState(false)
+  const [pdfTemplate, setPdfTemplate] = useState<ChecklistTemplate | null>(null)
+  const [pdfMetadata, setPdfMetadata] = useState<ChecklistPdfMetadata>({})
 
   useEffect(() => {
     fetchTemplates()
@@ -111,7 +131,8 @@ export default function ChecklistsPage() {
     setFormName('')
     setFormDescription('')
     setFormNotes('')
-    setFormItems([{ item_no: 1, description: '' }])
+    setFormItems([{ item_no: 1, description: '', section: null }])
+    setFormSignatories([...DEFAULT_SIGNATORIES])
   }
 
   function openCreateDialog() {
@@ -125,23 +146,32 @@ export default function ChecklistsPage() {
     setFormDescription(template.description || '')
     setFormNotes(template.notes_template || '')
     setFormItems(
-      template.items?.map(item => ({
-        item_no: item.item_no,
-        description: item.description,
-      })) || [{ item_no: 1, description: '' }]
+      template.items
+        ?.slice()
+        .sort((a, b) => a.sort_order - b.sort_order)
+        .map(item => ({
+          item_no: item.item_no,
+          description: item.description,
+          section: item.section,
+        })) || [{ item_no: 1, description: '', section: null }]
+    )
+    setFormSignatories(
+      template.signatories && template.signatories.length > 0
+        ? [...template.signatories]
+        : [...DEFAULT_SIGNATORIES]
     )
     setEditingTemplate(template)
     setShowCreateDialog(true)
   }
 
   function addItem() {
-    setFormItems([...formItems, { item_no: formItems.length + 1, description: '' }])
+    const lastSection = formItems.length > 0 ? formItems[formItems.length - 1].section : null
+    setFormItems([...formItems, { item_no: formItems.length + 1, description: '', section: lastSection }])
   }
 
   function removeItem(index: number) {
     if (formItems.length > 1) {
       const newItems = formItems.filter((_, i) => i !== index)
-      // Renumber items
       setFormItems(newItems.map((item, i) => ({ ...item, item_no: i + 1 })))
     }
   }
@@ -150,6 +180,20 @@ export default function ChecklistsPage() {
     const newItems = [...formItems]
     newItems[index].description = description
     setFormItems(newItems)
+  }
+
+  function addSignatory() {
+    setFormSignatories([...formSignatories, ''])
+  }
+
+  function updateSignatory(index: number, value: string) {
+    const next = [...formSignatories]
+    next[index] = value
+    setFormSignatories(next)
+  }
+
+  function removeSignatory(index: number) {
+    setFormSignatories(formSignatories.filter((_, i) => i !== index))
   }
 
   async function handleSaveTemplate() {
@@ -164,21 +208,22 @@ export default function ChecklistsPage() {
       return
     }
 
+    const cleanSignatories = formSignatories.map((s) => s.trim()).filter(Boolean)
+
     try {
       if (editingTemplate) {
-        // Update existing template
         const { error: templateError } = await supabase
           .from('checklist_templates')
           .update({
             name: formName.trim(),
             description: formDescription.trim() || null,
             notes_template: formNotes.trim() || null,
+            signatories: cleanSignatories,
           })
           .eq('id', editingTemplate.id)
 
         if (templateError) throw templateError
 
-        // Delete existing items and re-insert
         await supabase
           .from('checklist_template_items')
           .delete()
@@ -189,8 +234,9 @@ export default function ChecklistsPage() {
           .insert(
             validItems.map((item, index) => ({
               template_id: editingTemplate.id,
-              item_no: index + 1,
+              item_no: item.item_no,
               description: item.description.trim(),
+              section: item.section || null,
               sort_order: index + 1,
             }))
           )
@@ -199,13 +245,13 @@ export default function ChecklistsPage() {
 
         toast.success('Template updated successfully')
       } else {
-        // Create new template
         const { data: template, error: templateError } = await supabase
           .from('checklist_templates')
           .insert({
             name: formName.trim(),
             description: formDescription.trim() || null,
             notes_template: formNotes.trim() || null,
+            signatories: cleanSignatories,
           })
           .select()
           .single()
@@ -217,8 +263,9 @@ export default function ChecklistsPage() {
           .insert(
             validItems.map((item, index) => ({
               template_id: template.id,
-              item_no: index + 1,
+              item_no: item.item_no,
               description: item.description.trim(),
+              section: item.section || null,
               sort_order: index + 1,
             }))
           )
@@ -255,67 +302,24 @@ export default function ChecklistsPage() {
     }
   }
 
-  function handleFileSelect(event: React.ChangeEvent<HTMLInputElement>) {
+  async function handleFileSelect(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
     if (!file) return
 
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      try {
-        const data = new Uint8Array(e.target?.result as ArrayBuffer)
-        const workbook = XLSX.read(data, { type: 'array' })
-        const sheetName = workbook.SheetNames[0]
-        const worksheet = workbook.Sheets[sheetName]
-        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][]
-
-        // Parse the template format
-        // Row 4: CHECKLIST FOR [name]
-        // Row 9: Headers (S No, Item description, Status, Remarks)
-        // Row 10+: Items
-
-        let checklistName = ''
-        const items: { item_no: number; description: string }[] = []
-
-        jsonData.forEach((row, index) => {
-          // Check for checklist name (row 4 in Excel = index 3)
-          if (row[1] && typeof row[1] === 'string' && row[1].includes('CHECKLIST FOR')) {
-            checklistName = row[1].replace('CHECKLIST FOR', '').trim()
-          }
-
-          // Check for items (rows after headers)
-          // Items have a number in first column and description in second
-          if (typeof row[0] === 'number' && row[0] >= 1 && row[0] <= 20) {
-            const description = row[1]?.toString().trim()
-            if (description) {
-              items.push({
-                item_no: row[0],
-                description: description,
-              })
-            }
-          }
-        })
-
-        if (items.length === 0) {
-          // If no items found with descriptions, create empty placeholders
-          for (let i = 1; i <= 10; i++) {
-            items.push({ item_no: i, description: '' })
-          }
-        }
-
-        setUploadName(checklistName || file.name.replace(/\.[^/.]+$/, ''))
-        setUploadDescription('')
-        setUploadedItems(items)
-        setShowUploadDialog(true)
-      } catch (error) {
-        console.error('Error parsing Excel file:', error)
-        toast.error('Failed to parse Excel file')
+    try {
+      const parsed = await parseChecklistFile(file)
+      setUploadName(parsed.name || file.name.replace(/\.[^/.]+$/, ''))
+      setUploadDescription(parsed.description || '')
+      setUploadedItems(parsed.items)
+      setUploadSignatories(parsed.signatories)
+      setShowUploadDialog(true)
+    } catch (error) {
+      console.error('Error parsing Excel file:', error)
+      toast.error('Failed to parse Excel file')
+    } finally {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
       }
-    }
-    reader.readAsArrayBuffer(file)
-
-    // Reset file input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
     }
   }
 
@@ -325,11 +329,13 @@ export default function ChecklistsPage() {
       return
     }
 
-    const validItems = uploadedItems.filter(item => item.description.trim())
+    const validItems = uploadedItems.filter((item) => item.description.trim())
     if (validItems.length === 0) {
       toast.error('Please add at least one item with description')
       return
     }
+
+    const cleanSignatories = uploadSignatories.map((s) => s.trim()).filter(Boolean)
 
     try {
       const { data: template, error: templateError } = await supabase
@@ -337,6 +343,7 @@ export default function ChecklistsPage() {
         .insert({
           name: uploadName.trim(),
           description: uploadDescription.trim() || null,
+          signatories: cleanSignatories,
         })
         .select()
         .single()
@@ -348,8 +355,9 @@ export default function ChecklistsPage() {
         .insert(
           validItems.map((item, index) => ({
             template_id: template.id,
-            item_no: index + 1,
+            item_no: item.item_no,
             description: item.description.trim(),
+            section: item.section || null,
             sort_order: index + 1,
           }))
         )
@@ -361,6 +369,7 @@ export default function ChecklistsPage() {
       setUploadedItems([])
       setUploadName('')
       setUploadDescription('')
+      setUploadSignatories([...DEFAULT_SIGNATORIES])
       fetchTemplates()
     } catch (error) {
       console.error('Error saving uploaded template:', error)
@@ -372,6 +381,78 @@ export default function ChecklistsPage() {
     const newItems = [...uploadedItems]
     newItems[index].description = description
     setUploadedItems(newItems)
+  }
+
+  // ===== PDF Export =====
+
+  function exportBlankPdf(template: ChecklistTemplate) {
+    if (!template.items || template.items.length === 0) {
+      toast.error('Template has no items')
+      return
+    }
+    const sortedItems = template.items.slice().sort((a, b) => a.sort_order - b.sort_order)
+    const doc = generateChecklistPdf(
+      {
+        name: template.name,
+        description: template.description,
+        notes_template: template.notes_template,
+        signatories: template.signatories && template.signatories.length > 0 ? template.signatories : DEFAULT_SIGNATORIES,
+        items: sortedItems.map((i) => ({
+          section: i.section,
+          item_no: i.item_no,
+          description: i.description,
+        })),
+      },
+      {},
+      { mode: 'blank' }
+    )
+    doc.save(`Checklist_${template.name.replace(/[^A-Za-z0-9]+/g, '_')}_BLANK.pdf`)
+    toast.success('Blank PDF generated')
+  }
+
+  function openMetadataDialog(template: ChecklistTemplate) {
+    if (!template.items || template.items.length === 0) {
+      toast.error('Template has no items')
+      return
+    }
+    setPdfTemplate(template)
+    const today = new Date().toISOString().split('T')[0]
+    setPdfMetadata({
+      project: '',
+      make: '',
+      date: today,
+      shopDrawingNo: '',
+      boqLineItemNo: '',
+      location: '',
+      buildingFloor: '',
+    })
+    setShowMetadataDialog(true)
+  }
+
+  function exportFilledPdf() {
+    if (!pdfTemplate?.items) return
+    const sortedItems = pdfTemplate.items.slice().sort((a, b) => a.sort_order - b.sort_order)
+    const doc = generateChecklistPdf(
+      {
+        name: pdfTemplate.name,
+        description: pdfTemplate.description,
+        notes_template: pdfTemplate.notes_template,
+        signatories:
+          pdfTemplate.signatories && pdfTemplate.signatories.length > 0
+            ? pdfTemplate.signatories
+            : DEFAULT_SIGNATORIES,
+        items: sortedItems.map((i) => ({
+          section: i.section,
+          item_no: i.item_no,
+          description: i.description,
+        })),
+      },
+      pdfMetadata,
+      { mode: 'filled' }
+    )
+    doc.save(`Checklist_${pdfTemplate.name.replace(/[^A-Za-z0-9]+/g, '_')}_FILLED.pdf`)
+    setShowMetadataDialog(false)
+    toast.success('Filled PDF generated')
   }
 
   return (
@@ -459,10 +540,33 @@ export default function ChecklistsPage() {
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1">
                       <Button
                         variant="ghost"
                         size="sm"
+                        title="Export Blank PDF"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          exportBlankPdf(template)
+                        }}
+                      >
+                        <Printer className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        title="Export Filled PDF"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          openMetadataDialog(template)
+                        }}
+                      >
+                        <FileText className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        title="Edit template"
                         onClick={(e) => {
                           e.stopPropagation()
                           openEditDialog(template)
@@ -473,6 +577,7 @@ export default function ChecklistsPage() {
                       <Button
                         variant="ghost"
                         size="sm"
+                        title="Delete template"
                         onClick={(e) => {
                           e.stopPropagation()
                           handleDeleteTemplate(template.id)
@@ -497,16 +602,42 @@ export default function ChecklistsPage() {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {template.items?.sort((a, b) => a.item_no - b.item_no).map((item) => (
-                            <TableRow key={item.id}>
-                              <TableCell className="font-medium">{item.item_no}</TableCell>
-                              <TableCell>{item.description}</TableCell>
-                            </TableRow>
-                          ))}
+                          {(() => {
+                            const sorted = template.items?.slice().sort((a, b) => a.sort_order - b.sort_order) || []
+                            const rows: React.ReactElement[] = []
+                            let lastSection: string | null | undefined = undefined
+                            for (const item of sorted) {
+                              if (item.section !== lastSection) {
+                                lastSection = item.section
+                                if (item.section) {
+                                  rows.push(
+                                    <TableRow key={`sec-${item.id}`} className="bg-blue-50">
+                                      <TableCell colSpan={2} className="text-sm font-semibold text-blue-900">
+                                        {item.section}
+                                      </TableCell>
+                                    </TableRow>
+                                  )
+                                }
+                              }
+                              rows.push(
+                                <TableRow key={item.id}>
+                                  <TableCell className="font-medium">{item.item_no}</TableCell>
+                                  <TableCell>{item.description}</TableCell>
+                                </TableRow>
+                              )
+                            }
+                            return rows
+                          })()}
                         </TableBody>
                       </Table>
-                      {template.notes_template && (
+                      {template.signatories && template.signatories.length > 0 && (
                         <div className="mt-4 p-3 bg-slate-50 rounded">
+                          <p className="text-sm font-medium text-slate-700 mb-1">Signatories ({template.signatories.length}):</p>
+                          <p className="text-sm text-slate-600">{template.signatories.join(' · ')}</p>
+                        </div>
+                      )}
+                      {template.notes_template && (
+                        <div className="mt-2 p-3 bg-slate-50 rounded">
                           <p className="text-sm font-medium text-slate-700">Notes Template:</p>
                           <p className="text-sm text-slate-600">{template.notes_template}</p>
                         </div>
@@ -598,6 +729,39 @@ export default function ChecklistsPage() {
                 rows={3}
               />
             </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label>Signatories</Label>
+                <Button type="button" variant="outline" size="sm" onClick={addSignatory}>
+                  <Plus className="h-4 w-4 mr-1" />
+                  Add Signatory
+                </Button>
+              </div>
+              <p className="text-xs text-slate-500 mb-2">
+                Names that appear in the signature block at the bottom of the printed checklist
+              </p>
+              <div className="space-y-2 max-h-[180px] overflow-y-auto">
+                {formSignatories.map((sig, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <Input
+                      value={sig}
+                      onChange={(e) => updateSignatory(index, e.target.value)}
+                      placeholder="e.g., C&W Representative"
+                      className="flex-1"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeSignatory(index)}
+                    >
+                      <Trash2 className="h-4 w-4 text-red-500" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
 
           <DialogFooter>
@@ -646,21 +810,50 @@ export default function ChecklistsPage() {
             <div>
               <Label>Checklist Items ({uploadedItems.length})</Label>
               <div className="space-y-2 max-h-[300px] overflow-y-auto mt-2">
-                {uploadedItems.map((item, index) => (
-                  <div key={index} className="flex items-center gap-2">
-                    <span className="w-8 text-center text-sm font-medium text-slate-500">
-                      {item.item_no}
-                    </span>
-                    <Input
-                      value={item.description}
-                      onChange={(e) => updateUploadedItem(index, e.target.value)}
-                      placeholder="Item description"
-                      className="flex-1"
-                    />
-                  </div>
-                ))}
+                {(() => {
+                  const rows: React.ReactElement[] = []
+                  let lastSection: string | null | undefined = undefined
+                  uploadedItems.forEach((item, index) => {
+                    if (item.section !== lastSection) {
+                      lastSection = item.section
+                      if (item.section) {
+                        rows.push(
+                          <div key={`sec-${index}`} className="text-xs font-semibold text-blue-900 bg-blue-50 px-2 py-1 rounded mt-2">
+                            {item.section}
+                          </div>
+                        )
+                      }
+                    }
+                    rows.push(
+                      <div key={index} className="flex items-center gap-2">
+                        <span className="w-8 text-center text-sm font-medium text-slate-500">
+                          {item.item_no}
+                        </span>
+                        <Input
+                          value={item.description}
+                          onChange={(e) => updateUploadedItem(index, e.target.value)}
+                          placeholder="Item description"
+                          className="flex-1"
+                        />
+                      </div>
+                    )
+                  })
+                  return rows
+                })()}
               </div>
             </div>
+
+            {uploadSignatories.length > 0 && (
+              <div>
+                <Label>Detected Signatories ({uploadSignatories.length})</Label>
+                <p className="text-xs text-slate-500 mt-1">
+                  Edit later via the template&apos;s Edit dialog if needed
+                </p>
+                <div className="text-sm text-slate-600 mt-1 p-2 bg-slate-50 rounded">
+                  {uploadSignatories.join(' · ')}
+                </div>
+              </div>
+            )}
           </div>
 
           <DialogFooter>
@@ -669,6 +862,89 @@ export default function ChecklistsPage() {
             </Button>
             <Button onClick={handleSaveUploadedTemplate}>
               Save Template
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Filled PDF Metadata Dialog */}
+      <Dialog open={showMetadataDialog} onOpenChange={setShowMetadataDialog}>
+        <DialogContent className="max-w-xl bg-white">
+          <DialogHeader>
+            <DialogTitle>Generate Filled PDF</DialogTitle>
+            <DialogDescription>
+              Fill in the per-submission details. Leave any field blank to print an underline for handwriting.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2">
+              <Label htmlFor="md-project">Project</Label>
+              <Input
+                id="md-project"
+                value={pdfMetadata.project || ''}
+                onChange={(e) => setPdfMetadata({ ...pdfMetadata, project: e.target.value })}
+                placeholder="e.g., TCS Vizag"
+              />
+            </div>
+            <div>
+              <Label htmlFor="md-make">Make</Label>
+              <Input
+                id="md-make"
+                value={pdfMetadata.make || ''}
+                onChange={(e) => setPdfMetadata({ ...pdfMetadata, make: e.target.value })}
+                placeholder="e.g., K-Light"
+              />
+            </div>
+            <div>
+              <Label htmlFor="md-date">Date</Label>
+              <Input
+                id="md-date"
+                type="date"
+                value={pdfMetadata.date || ''}
+                onChange={(e) => setPdfMetadata({ ...pdfMetadata, date: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label htmlFor="md-drawing">Shop Drawing No</Label>
+              <Input
+                id="md-drawing"
+                value={pdfMetadata.shopDrawingNo || ''}
+                onChange={(e) => setPdfMetadata({ ...pdfMetadata, shopDrawingNo: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label htmlFor="md-boq">BOQ Line Item No</Label>
+              <Input
+                id="md-boq"
+                value={pdfMetadata.boqLineItemNo || ''}
+                onChange={(e) => setPdfMetadata({ ...pdfMetadata, boqLineItemNo: e.target.value })}
+              />
+            </div>
+            <div className="col-span-2">
+              <Label htmlFor="md-location">Location</Label>
+              <Input
+                id="md-location"
+                value={pdfMetadata.location || ''}
+                onChange={(e) => setPdfMetadata({ ...pdfMetadata, location: e.target.value })}
+              />
+            </div>
+            <div className="col-span-2">
+              <Label htmlFor="md-floor">Building &amp; Floor</Label>
+              <Input
+                id="md-floor"
+                value={pdfMetadata.buildingFloor || ''}
+                onChange={(e) => setPdfMetadata({ ...pdfMetadata, buildingFloor: e.target.value })}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowMetadataDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={exportFilledPdf}>
+              Generate PDF
             </Button>
           </DialogFooter>
         </DialogContent>
