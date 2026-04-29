@@ -35,11 +35,14 @@ import {
   TrendingUp,
   BarChart3,
   ClipboardList,
+  FileText,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { computeUptoDateMap } from '@/lib/upto-date'
 import { toast } from 'sonner'
 import * as XLSX from 'xlsx'
+import jsPDF from 'jspdf'
+import autoTable from 'jspdf-autotable'
 
 interface Site {
   id: string
@@ -505,6 +508,258 @@ export default function RABillingPage() {
     toast.success('Exported to Excel')
   }
 
+  function exportToPDF() {
+    if (!selectedPackageId || headlines.length === 0) return
+
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+    const pageWidth = doc.internal.pageSize.getWidth()
+    const pageHeight = doc.internal.pageSize.getHeight()
+    const margin = 10
+
+    const siteName = sites.find(s => s.id === selectedSiteId)?.name || 'Site'
+    const pkg = packages.find(p => p.id === selectedPackageId)
+    const pkgName = pkg?.name || 'Package'
+    const sourceLabel = pkg?.actual_source === 'execution' ? 'BOQ Management (Upto Date)' : 'Excel Template'
+    const billingTypeLabel = isSupplyInstallation ? 'Supply & Installation' : 'Standard'
+    const generatedDate = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+
+    // Header band
+    doc.setFillColor(30, 41, 59)
+    doc.rect(0, 0, pageWidth, 18, 'F')
+    doc.setTextColor(255, 255, 255)
+    doc.setFontSize(16)
+    doc.setFont('helvetica', 'bold')
+    doc.text('RA Billing Statement', margin, 12)
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'normal')
+    doc.text(`Generated: ${generatedDate}`, pageWidth - margin, 12, { align: 'right' })
+
+    // Sub-header info bar
+    doc.setFillColor(241, 245, 249)
+    doc.rect(0, 18, pageWidth, 14, 'F')
+    doc.setTextColor(15, 23, 42)
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'bold')
+    doc.text(siteName, margin, 25)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(9)
+    doc.text(`Package: ${pkgName}  |  ${billingTypeLabel}`, margin, 30)
+    doc.text(`Actual Source: ${sourceLabel}`, pageWidth - margin, 30, { align: 'right' })
+
+    // Summary cards
+    let currentY = 38
+    const cardGap = 3
+    const cardWidth = (pageWidth - margin * 2 - cardGap * 3) / 4
+    const cardHeight = 18
+    const cardLabels = ['Total BOQ Amount', 'Total Actual Amount', 'Billing %', 'Items with Actuals']
+    const cardValues = [
+      formatAmount(totalBOQAmount),
+      formatAmount(totalActualAmount),
+      `${billingPercent.toFixed(1)}%`,
+      `${itemsWithActuals} / ${allLineItems.length}`,
+    ]
+    for (let i = 0; i < 4; i++) {
+      const x = margin + i * (cardWidth + cardGap)
+      doc.setFillColor(248, 250, 252)
+      doc.setDrawColor(226, 232, 240)
+      doc.roundedRect(x, currentY, cardWidth, cardHeight, 1.5, 1.5, 'FD')
+      doc.setFontSize(8)
+      doc.setTextColor(100, 116, 139)
+      doc.setFont('helvetica', 'normal')
+      doc.text(cardLabels[i], x + 3, currentY + 6)
+      doc.setFontSize(11)
+      doc.setTextColor(15, 23, 42)
+      doc.setFont('helvetica', 'bold')
+      doc.text(cardValues[i], x + 3, currentY + 14)
+    }
+    currentY += cardHeight + 6
+
+    // Table headers
+    const headers = isSupplyInstallation
+      ? ['S.No', 'Description', 'Unit', 'Qty Ext', 'Qty', 'Supply Rate', 'Install Rate', 'Supply Amt', 'Install Amt', 'Actual Qty', 'Actual Supply', 'Actual Install', 'Actual Total']
+      : ['S.No', 'Description', 'Location', 'Unit', 'Qty', 'Rate', 'Total Amt', 'GST Amt', 'Total w/GST', 'Actual Qty', 'Actual Amt', 'Actual w/GST']
+    const numCols = headers.length
+
+    type CellDef = string | { content: string; colSpan?: number; styles?: Record<string, unknown> }
+    const subtotalFill = [241, 245, 249] as [number, number, number]
+    const grandFill = [15, 23, 42] as [number, number, number]
+    const headlineFill = [219, 234, 254] as [number, number, number]
+    const headlineText = [30, 58, 138] as [number, number, number]
+    const body: CellDef[][] = []
+
+    for (const headline of headlines) {
+      // Headline title row spans full width
+      body.push([{
+        content: `${headline.serial_number}. ${headline.name}`,
+        colSpan: numCols,
+        styles: { fillColor: headlineFill, textColor: headlineText, fontStyle: 'bold', halign: 'left' },
+      }])
+
+      for (const li of headline.line_items) {
+        if (isSupplyInstallation) {
+          body.push([
+            li.item_number,
+            li.description,
+            li.unit || '-',
+            li.qty_ext || '-',
+            formatQty(li.quantity),
+            formatAmount(li.supply_rate),
+            formatAmount(li.installation_rate),
+            formatAmount(li.supply_amount),
+            formatAmount(li.installation_amount),
+            formatQty(li.actual_quantity),
+            formatAmount(li.actual_supply_amount),
+            formatAmount(li.actual_installation_amount),
+            formatAmount(li.actual_total_amount),
+          ])
+        } else {
+          body.push([
+            li.item_number,
+            li.description,
+            li.location || '-',
+            li.unit || '-',
+            formatQty(li.quantity),
+            formatAmount(li.rate),
+            formatAmount(li.total_amount),
+            formatAmount(li.gst_amount),
+            formatAmount(li.total_amount_with_gst),
+            formatQty(li.actual_quantity),
+            formatAmount(li.actual_amount),
+            formatAmount(li.actual_amount_with_gst),
+          ])
+        }
+      }
+
+      const sub = getHeadlineSubtotals(headline.line_items)
+      const subStyle = { fillColor: subtotalFill, fontStyle: 'bold', halign: 'right' }
+      const subFillOnly = { fillColor: subtotalFill }
+      if (isSupplyInstallation) {
+        body.push([
+          { content: 'Subtotal', colSpan: 7, styles: subStyle },
+          { content: formatAmount(sub.supplyAmount), styles: subStyle },
+          { content: formatAmount(sub.installationAmount), styles: subStyle },
+          { content: '', styles: subFillOnly },
+          { content: formatAmount(sub.actualSupplyAmount), styles: subStyle },
+          { content: formatAmount(sub.actualInstallationAmount), styles: subStyle },
+          { content: formatAmount(sub.actualTotalAmount), styles: subStyle },
+        ])
+      } else {
+        body.push([
+          { content: 'Subtotal', colSpan: 6, styles: subStyle },
+          { content: formatAmount(sub.totalAmount), styles: subStyle },
+          { content: formatAmount(sub.gstAmount), styles: subStyle },
+          { content: formatAmount(sub.totalAmountWithGst), styles: subStyle },
+          { content: '', styles: subFillOnly },
+          { content: formatAmount(sub.actualAmount), styles: subStyle },
+          { content: formatAmount(sub.actualAmountWithGst), styles: subStyle },
+        ])
+      }
+    }
+
+    // Grand total
+    const grand = getHeadlineSubtotals(allLineItems)
+    const grandStyle = { fillColor: grandFill, textColor: [255, 255, 255], fontStyle: 'bold', halign: 'right' }
+    const grandFillOnly = { fillColor: grandFill }
+    if (isSupplyInstallation) {
+      body.push([
+        { content: 'GRAND TOTAL', colSpan: 7, styles: grandStyle },
+        { content: formatAmount(grand.supplyAmount), styles: grandStyle },
+        { content: formatAmount(grand.installationAmount), styles: grandStyle },
+        { content: '', styles: grandFillOnly },
+        { content: formatAmount(grand.actualSupplyAmount), styles: grandStyle },
+        { content: formatAmount(grand.actualInstallationAmount), styles: grandStyle },
+        { content: formatAmount(totalActualAmount), styles: grandStyle },
+      ])
+    } else {
+      body.push([
+        { content: 'GRAND TOTAL', colSpan: 6, styles: grandStyle },
+        { content: formatAmount(grand.totalAmount), styles: grandStyle },
+        { content: formatAmount(grand.gstAmount), styles: grandStyle },
+        { content: formatAmount(totalBOQAmount), styles: grandStyle },
+        { content: '', styles: grandFillOnly },
+        { content: formatAmount(grand.actualAmount), styles: grandStyle },
+        { content: formatAmount(totalActualAmount), styles: grandStyle },
+      ])
+    }
+
+    const colStyles: Record<string, { cellWidth: number; halign?: 'left' | 'center' | 'right' }> =
+      isSupplyInstallation
+        ? {
+            0: { cellWidth: 11, halign: 'center' },
+            1: { cellWidth: 60 },
+            2: { cellWidth: 12, halign: 'center' },
+            3: { cellWidth: 18 },
+            4: { cellWidth: 14, halign: 'right' },
+            5: { cellWidth: 18, halign: 'right' },
+            6: { cellWidth: 18, halign: 'right' },
+            7: { cellWidth: 21, halign: 'right' },
+            8: { cellWidth: 21, halign: 'right' },
+            9: { cellWidth: 14, halign: 'right' },
+            10: { cellWidth: 22, halign: 'right' },
+            11: { cellWidth: 22, halign: 'right' },
+            12: { cellWidth: 22, halign: 'right' },
+          }
+        : {
+            0: { cellWidth: 11, halign: 'center' },
+            1: { cellWidth: 65 },
+            2: { cellWidth: 22 },
+            3: { cellWidth: 12, halign: 'center' },
+            4: { cellWidth: 16, halign: 'right' },
+            5: { cellWidth: 18, halign: 'right' },
+            6: { cellWidth: 22, halign: 'right' },
+            7: { cellWidth: 20, halign: 'right' },
+            8: { cellWidth: 22, halign: 'right' },
+            9: { cellWidth: 16, halign: 'right' },
+            10: { cellWidth: 22, halign: 'right' },
+            11: { cellWidth: 22, halign: 'right' },
+          }
+
+    autoTable(doc, {
+      startY: currentY,
+      head: [headers],
+      body,
+      headStyles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontSize: 8, halign: 'center', fontStyle: 'bold' },
+      bodyStyles: { fontSize: 7.5, cellPadding: 1.5, valign: 'middle' },
+      columnStyles: colStyles,
+      margin: { left: margin, right: margin, top: 15, bottom: 12 },
+      didDrawPage: () => {
+        const pageInfo = doc.getCurrentPageInfo()
+        const pageCount = doc.getNumberOfPages()
+        doc.setFontSize(8)
+        doc.setTextColor(100, 116, 139)
+        doc.text(
+          `Page ${pageInfo.pageNumber} of ${pageCount}  |  ${siteName} - ${pkgName}`,
+          pageWidth / 2,
+          pageHeight - 5,
+          { align: 'center' }
+        )
+      },
+    })
+
+    // Signature block
+    const lastTable = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable
+    let finalY = (lastTable?.finalY || currentY) + 18
+    if (finalY > pageHeight - 25) {
+      doc.addPage()
+      finalY = 30
+    }
+    doc.setDrawColor(15, 23, 42)
+    doc.setLineWidth(0.3)
+    doc.setFontSize(10)
+    doc.setTextColor(15, 23, 42)
+    doc.setFont('helvetica', 'normal')
+    const signWidth = 80
+    const leftX = margin + 20
+    const rightX = pageWidth - margin - 20 - signWidth
+    doc.line(leftX, finalY, leftX + signWidth, finalY)
+    doc.line(rightX, finalY, rightX + signWidth, finalY)
+    doc.text('Prepared by', leftX + signWidth / 2, finalY + 5, { align: 'center' })
+    doc.text('Approved by', rightX + signWidth / 2, finalY + 5, { align: 'center' })
+
+    doc.save(`RA_Billing_${siteName}_${pkgName}.pdf`)
+    toast.success('Exported to PDF')
+  }
+
   const filteredPackages = packages.filter(p => p.site_id === selectedSiteId)
 
   return (
@@ -564,10 +819,16 @@ export default function RABillingPage() {
                   </SelectContent>
                 </Select>
                 {headlines.length > 0 && (
-                  <Button variant="outline" onClick={exportToExcel}>
-                    <Download className="h-4 w-4 mr-2" />
-                    Export
-                  </Button>
+                  <>
+                    <Button variant="outline" onClick={exportToExcel}>
+                      <Download className="h-4 w-4 mr-2" />
+                      Excel
+                    </Button>
+                    <Button variant="outline" onClick={exportToPDF}>
+                      <FileText className="h-4 w-4 mr-2" />
+                      PDF
+                    </Button>
+                  </>
                 )}
               </div>
             </div>
