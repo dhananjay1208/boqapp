@@ -49,6 +49,9 @@ app/
 │   ├── lib/
 │   │   ├── supabase.ts         # Supabase client
 │   │   ├── excel-parser.ts     # BOQ Excel import parser (multi-format)
+│   │   ├── upto-date.ts        # Shared "Upto Date" computation (JMR-approved else workstation sum)
+│   │   ├── checklist-parser.ts # Tolerant checklist Excel parser (handles 4 layout variants)
+│   │   ├── checklist-pdf.ts    # Professional PDF generator for checklist submissions
 │   │   └── utils.ts            # Utility functions (cn)
 │   └── types/
 │       └── database.ts         # TypeScript types
@@ -71,13 +74,16 @@ app/
 - Track materials per line item
 - **Progress Tracking** (per line item):
   - **BOQ Qty**: Planned quantity from BOQ
-  - **Upto Date**: Sum of all progress entries from Workstations (across all workstations)
+  - **Upto Date**: JMR-driven with workstation fallback (since PR #3, computed via shared `lib/upto-date.ts`):
+    - If at least one JMR with `status='approved'` exists for the line item → sum of `boq_jmr.approved_quantity` across those JMRs
+    - Else → sum of `workstation_boq_progress.quantity` for that line item
   - **Remaining**: BOQ Qty - Upto Date
   - **Progress Bar**: Visual indicator with color coding
     - Red (0-25%): Behind schedule
     - Amber (25-75%): In progress
     - Green (75-100%): Near completion
     - Blue (>100%): Over-executed
+- **JMR Tab**: per-line-item JMRs with status (draft/submitted/approved/disputed); approved JMRs flow into Upto Date
 - **Consumption History** (read-only):
   - Displays material consumption recorded from Workstations module
   - Shows material name, quantity, workstation name, date
@@ -92,7 +98,15 @@ app/
   - **Supply & Installation (S&I)**: 13 columns — S.No, Description, Unit, Qty Ext, Quantity, Supply Rate, Install Rate, Supply Amt, Install Amt, Actual Qty, Actual Supply, Actual Install, Actual Total
 - Description column uses `max-w-[350px]` with `whitespace-normal break-words` to prevent horizontal scrollbar overflow on long descriptions
 - Headline subtotals and grand total row (adapts to billing type)
-- Export to Excel (adapts columns/headers to billing type)
+- **Site Summary card** at top of page (since PR #1) — shows Package | BOQ amount | Actual amount | Actual with GST per package + Total row, aggregated across all packages on the selected site
+- **Actual source toggle** per package (since PR #4, column `packages.actual_source`):
+  - `'execution'` (default): Actual Qty = Upto Date from BOQ Management; Actual Amt = Upto Date × rate; Actual w/ GST applies the line's GST percentage (`gst_amount / total_amount`); for S&I = `uptoDate × supply_rate + uptoDate × installation_rate`
+  - `'template'`: stored Excel-template values (`actual_*` columns)
+  - The toggle is a `Select` next to the site/package filters; on change it `update`s `packages.actual_source` and refetches
+- **Export buttons**:
+  - **Excel** — adapts columns to billing type
+  - **PDF** (since PR #7) — landscape A4 via jsPDF + jspdf-autotable: dark slate header band + generated date, light info bar with site/package/billing type/source, 4 rounded summary cards, headline-grouped table (light-blue headline rows, slate subtotals, dark grand total), page footer "Page X of Y | Site - Package", signature block "Prepared by / Approved by"
+  - Both exports are WYSIWYG with the actual source toggle
 - Data comes from columns on `boq_line_items`:
   - Standard: `rate`, `total_amount`, `gst_amount`, `total_amount_with_gst`, `actual_quantity`, `actual_amount`, `actual_amount_with_gst`
   - S&I: `qty_ext`, `supply_rate`, `installation_rate`, `supply_amount`, `installation_amount`, `actual_supply_amount`, `actual_installation_amount`, `actual_total_amount`
@@ -118,6 +132,7 @@ app/
   - **Line item level**: Test Certificate, TDS (MIR removed)
 - Supplier selection from master data
 - GST calculation (5%, 12%, 18%)
+- **Important** (since PR #2): the form's two `.insert()` calls into `grn_line_items` compute and persist `amount_without_gst = qty × rate` and `amount_with_gst = amount_without_gst × (1 + gst/100)`. Migration 021 made these stored (not computed) columns to preserve discount-adjusted amounts from Excel imports; the form must always set them, otherwise list views render `₹0`. Pre-PR-#2 rows can be refreshed by re-saving them in the Edit dialog.
 - **Compliance Tracking**:
   - Invoice-level: DC document (counted in invoice totals)
   - Line item-level: Test Cert + TDS per material (2 docs each)
@@ -179,8 +194,24 @@ app/
   - Export to Excel with all payment details
 
 ### 8. Checklists (`/checklists`)
-- Activity checklists per BOQ headline
-- Status tracking (pending, in_progress, completed)
+- **Checklist Templates** library (since PR #8 — major rework). A template = name + description + ordered list of items + signatories. Items can optionally belong to a `section` so a single template can group items into subsections (e.g., Core cuttings has "Before start of work" / "During Execution" / "Post Completion").
+- **Excel Upload** (`src/lib/checklist-parser.ts`): tolerant parser that handles all 4 demo layouts. Detects:
+  - Title row by scanning the top 12 rows for the word "CHECKLIST"
+  - Description column (`Item description` / `Item to Check` / `Item Desc`) — `S.No` column is one to its left
+  - Subsection banners — a row whose S.No column says "S.No"/"Sr. No." while the description column holds a non-label value (e.g., "Before start of work")
+  - Footer terminator — a `^Note\s*[:\-]?$` cell, **only after at least one item has already been collected** (avoids tripping on instruction rows like "Note: please tick where applicable" that sit above the items)
+  - Signatories — cells matching `/repr[a-z]*tat[a-z]*\b|repres[a-z]*tive\b/i` (catches typos like "representavtibve")
+  - Items renumbered per section (each section starts at 1) so sources with skipped numbers (1, 2, 3, 5, 7, 9) come out clean
+- **PDF Export** (`src/lib/checklist-pdf.ts`): portrait A4, two modes:
+  - **Blank PDF**: metadata fields print as labels with grey underlines for handwriting (Project / Make / Shop Drawing No / Date / BOQ Line Item No / Location / Building & Floor)
+  - **Filled PDF**: opens metadata dialog → values populate next to labels
+  - Items table grouped by section banners (light-blue full-width rows); Status and Remarks columns always blank for field sign-off
+  - Notes block (if `notes_template` is set)
+  - "Clearances Provided By" signatories table (Name | Date | Signature) — one row per signatory
+  - Footer: template name + page X of Y
+- **Signatories editor** in the create/edit dialog — defaults to 6 standard reps (C&W / Electrical / HVAC / Siemens / IT / Ostraca), per-template configurable
+- **Bulk seed**: `app/seed-checklists.js` — one-shot script that loads `Core cuttings.xlsx` and `DB Installation check list.xlsx` from `../../Demo/Checklists/` into Supabase. Skips templates whose name already exists. Run with `node seed-checklists.js`.
+- **Note**: the legacy "activity checklists per BOQ headline" feature (template-instance with status tracking on a specific BOQ headline) is separate from these standalone templates and uses different tables (`checklists`, `checklist_items`).
 
 ### 9. Reports (`/reports`)
 Reports module with expandable submenu:
@@ -240,7 +271,9 @@ Reports module with expandable submenu:
 
 ### Core Tables
 - `sites` - Construction sites
-- `packages` - BOQ packages per site (has `billing_type`: 'standard' | 'supply_installation')
+- `packages` - BOQ packages per site
+  - `billing_type`: 'standard' | 'supply_installation' (migration 025)
+  - `actual_source`: 'execution' | 'template' (migration 026, default 'execution') — drives RA Billing's Actual Qty source per package
 - `boq_headlines` - BOQ section headers
 - `boq_line_items` - BOQ line items
 - `materials` - Materials per line item
@@ -302,6 +335,23 @@ Reports module with expandable submenu:
   - workstation_boq_progress_id, material_id, material_name, quantity, unit
   - **Source of truth for BOQ line item consumption history**
 
+### JMR Tables
+- `boq_jmr` - Joint Measurement Reports per BOQ line item
+  - line_item_id, jmr_number, jmr_date, measurement_date
+  - boq_quantity, executed_quantity, approved_quantity
+  - customer_representative, contractor_representative, remarks
+  - status: 'draft' | 'submitted' | 'approved' | 'disputed'
+  - file_path, file_name (signed JMR doc in `compliance-docs` storage)
+  - **Source of truth for "approved quantity"** — drives BOQ Upto Date and (via packages.actual_source) RA Billing actuals
+
+### Checklist Template Tables (since PR #8)
+- `checklist_templates` - Reusable checklist templates
+  - name, description, notes_template
+  - `signatories TEXT[]` (migration 027) — ordered list of role names for the PDF signature block; default = 6 standard reps
+- `checklist_template_items` - Items within a template
+  - template_id, item_no, description, sort_order
+  - `section TEXT` nullable (migration 027) — groups items into subsections; PDF renders a banner row when section changes
+
 ### Data Flow: Workstation → BOQ
 
 ```
@@ -317,8 +367,14 @@ Workstations Module (/workstations)
 └─────────────────────────────────────────────────────────────┘
     ↓
 BOQ Management (/boq/[id]) reads:
-    1. Progress: SUM(quantity) from workstation_boq_progress → "Upto Date"
+    1. Progress: computeUptoDateMap(lineItemIds) from src/lib/upto-date.ts:
+         - JMR-approved sum if any boq_jmr row with status='approved' exists for the line item
+         - Else workstation_boq_progress quantity sum
     2. Consumption: workstation_material_consumption → "Consumption History"
+
+RA Billing (/ra-billing) also reads computeUptoDateMap when packages.actual_source='execution',
+overriding the stored boq_line_items.actual_* columns with computed values for display, totals,
+summary cards, site summary, Excel export and PDF export.
 ```
 
 ## Supabase Storage Buckets
@@ -525,6 +581,8 @@ Key migrations:
 - `023_equipment_rates.sql` - Equipment rates table (supplier + equipment + rate), add supplier columns to expense_equipment
 - `024_ra_billing_columns.sql` - Add 7 RA Billing columns to boq_line_items (rate, total_amount, gst_amount, total_amount_with_gst, actual_quantity, actual_amount, actual_amount_with_gst)
 - `025_supply_installation_support.sql` - Add `billing_type` to packages, add 8 S&I columns to boq_line_items (qty_ext, supply_rate, installation_rate, supply_amount, installation_amount, actual_supply_amount, actual_installation_amount, actual_total_amount)
+- `026_actual_source_preference.sql` - Add `packages.actual_source` ('template' | 'execution', default 'execution', NOT NULL with backfill) — drives RA Billing's Actual Qty source per package
+- `027_checklist_sections_signatories.sql` - Add `checklist_template_items.section` (nullable) and `checklist_templates.signatories` (TEXT[] with 6-rep default)
 
 ## Import/Utility Scripts
 
@@ -569,6 +627,16 @@ node upload-invoices-visakhapatnam.js
 - Normalized matching (strip non-alphanumeric, case-insensitive)
 - Uploads to `compliance-docs` bucket at `grn-invoices/{siteId}/{invoiceId}/{filename}`
 - Creates/updates `grn_invoice_dc` records
+
+### `seed-checklists.js`
+One-shot loader for the two starter checklist templates from the Demo folder.
+```bash
+node seed-checklists.js
+```
+- Reads `../../Demo/Checklists/Core cuttings.xlsx` (21 items, 3 sections) and `../../Demo/Checklists/DB Installation check list.xlsx` (19 items)
+- Inlines a JS port of `src/lib/checklist-parser.ts` (so it runs without TS compile)
+- Skips templates whose name already exists (by lowercase match)
+- Run **after** migration 027 has been applied in Supabase
 
 ## Development
 ```bash
