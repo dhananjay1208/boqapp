@@ -25,6 +25,7 @@ import { supabase } from '@/lib/supabase'
 import type { Site } from '@/types/database'
 import { toast } from 'sonner'
 import { format } from 'date-fns'
+import { getSession, isSuperuser } from '@/lib/auth'
 
 export default function SitesPage() {
   const [sites, setSites] = useState<Site[]>([])
@@ -36,10 +37,16 @@ export default function SitesPage() {
 
   async function fetchSites() {
     try {
-      const { data, error } = await supabase
+      const session = getSession()
+      let query = supabase
         .from('sites')
         .select('*')
         .order('created_at', { ascending: false })
+      // Tenant scoping: non-Cogneta tenants see only their own sites.
+      if (session && !isSuperuser(session)) {
+        query = query.eq('tenant_id', session.tenant_id)
+      }
+      const { data, error } = await query
 
       if (error) throw error
       setSites(data || [])

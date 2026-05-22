@@ -30,6 +30,12 @@ import { toast } from 'sonner'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { PDFDocument, rgb } from 'pdf-lib'
+import {
+  fetchMaterialComplianceMap,
+  effectiveDocStatus,
+  docStatusYN,
+  type LibraryRow as ComplianceLibraryRow,
+} from '@/lib/material-compliance'
 
 interface Site {
   id: string
@@ -113,6 +119,7 @@ export default function MIRReportsPage() {
   const [loading, setLoading] = useState(true)
   const [loadingInvoices, setLoadingInvoices] = useState(false)
   const [generatingPdf, setGeneratingPdf] = useState(false)
+  const [complianceLibrary, setComplianceLibrary] = useState<Map<string, ComplianceLibraryRow>>(new Map())
 
   // Fetch sites on mount
   useEffect(() => {
@@ -131,14 +138,15 @@ export default function MIRReportsPage() {
     }
   }, [selectedSiteId])
 
-  // Generate report data when MIR selection changes
+  // Generate report data when MIR selection changes (or library map arrives)
   useEffect(() => {
     if (selectedMirDate) {
       generateReportData()
     } else {
       setReportData([])
     }
-  }, [selectedMirDate, invoiceList])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMirDate, invoiceList, complianceLibrary])
 
   async function fetchSites() {
     try {
@@ -205,6 +213,20 @@ export default function MIRReportsPage() {
       setMirOptions(options)
       setSelectedMirDate('')
       setReportData([])
+
+      // Pull the material-level compliance library so Y/N/NA cells reflect library state too.
+      try {
+        const materialIds = Array.from(
+          new Set(
+            transformedData.flatMap((inv: GRNInvoice) =>
+              inv.line_items.map((li) => li.material_id).filter((id): id is string => !!id)
+            )
+          )
+        )
+        setComplianceLibrary(await fetchMaterialComplianceMap(materialIds))
+      } catch (libErr) {
+        console.error('Error fetching compliance library:', libErr)
+      }
     } catch (error) {
       toast.error('Failed to load invoices')
     } finally {
@@ -228,27 +250,17 @@ export default function MIRReportsPage() {
           }
         }
 
-        // Test Certificate status
+        // Test Certificate + TDS status — combines line-item flags with the compliance library.
+        const libRow = li.material_id ? complianceLibrary.get(li.material_id) : undefined
         const testDoc = li.documents.find(d => d.document_type === 'test_certificate')
-        let testStatus: 'Y' | 'N' | 'NA' = 'N'
-        if (testDoc) {
-          if (!testDoc.is_applicable) {
-            testStatus = 'NA'
-          } else {
-            testStatus = testDoc.is_uploaded ? 'Y' : 'N'
-          }
-        }
+        const testStatus: 'Y' | 'N' | 'NA' = testDoc
+          ? docStatusYN(effectiveDocStatus(testDoc, libRow?.test_certificate))
+          : 'N'
 
-        // TDS status
         const tdsDoc = li.documents.find(d => d.document_type === 'tds')
-        let tdsStatus: 'Y' | 'N' | 'NA' = 'N'
-        if (tdsDoc) {
-          if (!tdsDoc.is_applicable) {
-            tdsStatus = 'NA'
-          } else {
-            tdsStatus = tdsDoc.is_uploaded ? 'Y' : 'N'
-          }
-        }
+        const tdsStatus: 'Y' | 'N' | 'NA' = tdsDoc
+          ? docStatusYN(effectiveDocStatus(tdsDoc, libRow?.tds))
+          : 'N'
 
         return {
           sno: sno++,

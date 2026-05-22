@@ -39,9 +39,20 @@ import {
   Filter,
   Loader2,
   Upload,
+  Download,
+  FileSpreadsheet,
+  CheckCircle2,
+  AlertCircle,
+  XCircle,
 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
+import {
+  parseMaterialsExcel,
+  exportMaterialsXlsx,
+  downloadMaterialsTemplate,
+  type ParsedImport,
+} from '@/lib/materials-excel'
 
 interface MasterMaterial {
   id: string
@@ -79,6 +90,17 @@ export default function MasterMaterialsPage() {
   })
   const [newCategory, setNewCategory] = useState('')
   const [showNewCategory, setShowNewCategory] = useState(false)
+
+  // Import dialog state
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
+  const [importFileName, setImportFileName] = useState<string | null>(null)
+  const [parsed, setParsed] = useState<ParsedImport | null>(null)
+  const [importBusy, setImportBusy] = useState(false)
+  const [dragActive, setDragActive] = useState(false)
+
+  // Delete confirmation state
+  const [deleteTarget, setDeleteTarget] = useState<MasterMaterial | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   useEffect(() => {
     fetchMaterials()
@@ -213,22 +235,136 @@ export default function MasterMaterialsPage() {
     }
   }
 
-  async function handleDelete(material: MasterMaterial) {
-    if (!confirm(`Delete "${material.name}"? This action cannot be undone.`)) return
+  function askDelete(material: MasterMaterial) {
+    setDeleteTarget(material)
+  }
 
+  async function confirmDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
     try {
       // Soft delete by setting is_active to false
       const { error } = await supabase
         .from('master_materials')
         .update({ is_active: false })
-        .eq('id', material.id)
-
+        .eq('id', deleteTarget.id)
       if (error) throw error
-      toast.success('Material deleted')
+      toast.success(`"${deleteTarget.name}" deleted`)
+      setDeleteTarget(null)
       fetchMaterials()
     } catch (error) {
       console.error('Error deleting material:', error)
       toast.error('Failed to delete material')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  function handleExport() {
+    if (materials.length === 0) {
+      toast.error('Nothing to export')
+      return
+    }
+    const date = new Date().toISOString().slice(0, 10)
+    exportMaterialsXlsx(materials, `materials_${date}.xlsx`)
+  }
+
+  function openImportDialog() {
+    setImportFileName(null)
+    setParsed(null)
+    setDragActive(false)
+    setImportDialogOpen(true)
+  }
+
+  async function handleImportFile(file: File) {
+    setImportFileName(file.name)
+    setParsed(null)
+    try {
+      // We pass ALL materials (active + inactive) so the importer can reactivate soft-deleted rows.
+      const { data, error } = await supabase
+        .from('master_materials')
+        .select('id, category, name, unit, description, is_active')
+      if (error) throw error
+      const result = await parseMaterialsExcel(file, data || [])
+      if (result.totalRows === 0) {
+        toast.error('No data rows found in the file')
+        setParsed(null)
+        return
+      }
+      setParsed(result)
+    } catch (err: any) {
+      console.error(err)
+      toast.error(err?.message || 'Failed to read file')
+      setParsed(null)
+    }
+  }
+
+  function onFileInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0]
+    if (f) handleImportFile(f)
+    e.target.value = '' // allow re-selecting the same file
+  }
+
+  function onDragEvent(e: React.DragEvent, active: boolean) {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragActive(active)
+  }
+
+  function onDrop(e: React.DragEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    setDragActive(false)
+    const f = e.dataTransfer.files?.[0]
+    if (f) handleImportFile(f)
+  }
+
+  async function handleConfirmImport() {
+    if (!parsed) return
+    setImportBusy(true)
+    try {
+      // Inserts — chunk into batches of 500 to stay well under Supabase's payload limit.
+      const insertRows = parsed.toInsert.map((r) => ({
+        category: r.category,
+        name: r.name,
+        unit: r.unit,
+        description: r.description,
+      }))
+      for (let i = 0; i < insertRows.length; i += 500) {
+        const batch = insertRows.slice(i, i + 500)
+        const { error } = await supabase.from('master_materials').insert(batch)
+        if (error) throw error
+      }
+
+      // Updates — Supabase update() doesn't accept array payloads, so loop.
+      for (const u of parsed.toUpdate) {
+        const update: Record<string, unknown> = {
+          category: u.category,
+          name: u.name,
+          unit: u.unit,
+          description: u.description,
+        }
+        if (u.reactivate) update.is_active = true
+        const { error } = await supabase
+          .from('master_materials')
+          .update(update)
+          .eq('id', u.id)
+        if (error) throw error
+      }
+
+      toast.success(
+        `Imported ${parsed.toInsert.length} new + ${parsed.toUpdate.length} updated` +
+          (parsed.skipped.length ? `, ${parsed.skipped.length} skipped` : '')
+      )
+      setImportDialogOpen(false)
+      setParsed(null)
+      setImportFileName(null)
+      fetchMaterials()
+    } catch (err: any) {
+      console.error(err)
+      toast.error(err?.message || 'Import failed')
+    } finally {
+      setImportBusy(false)
     }
   }
 
@@ -273,10 +409,24 @@ export default function MasterMaterialsPage() {
                   Manage the master list of materials used across projects
                 </CardDescription>
               </div>
-              <Button onClick={openCreateDialog}>
-                <Plus className="h-4 w-4 mr-2" />
-                Add Material
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="outline" onClick={downloadMaterialsTemplate}>
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                  Template
+                </Button>
+                <Button variant="outline" onClick={openImportDialog}>
+                  <Upload className="h-4 w-4 mr-2" />
+                  Import
+                </Button>
+                <Button variant="outline" onClick={handleExport}>
+                  <Download className="h-4 w-4 mr-2" />
+                  Export
+                </Button>
+                <Button onClick={openCreateDialog}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Material
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
@@ -350,7 +500,7 @@ export default function MasterMaterialsPage() {
                     <TableHead className="w-[200px]">Category</TableHead>
                     <TableHead>Material Name</TableHead>
                     <TableHead className="w-[100px]">Unit</TableHead>
-                    <TableHead className="w-[100px] text-right">Actions</TableHead>
+                    <TableHead className="w-[200px] text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -376,21 +526,23 @@ export default function MasterMaterialsPage() {
                           <Badge variant="secondary">{material.unit}</Badge>
                         </TableCell>
                         <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
+                          <div className="flex justify-end gap-2">
                             <Button
-                              variant="ghost"
+                              variant="outline"
                               size="sm"
                               onClick={() => openEditDialog(material)}
                             >
-                              <Pencil className="h-4 w-4" />
+                              <Pencil className="h-3.5 w-3.5 mr-1.5" />
+                              Edit
                             </Button>
                             <Button
-                              variant="ghost"
+                              variant="outline"
                               size="sm"
-                              onClick={() => handleDelete(material)}
-                              className="text-red-600"
+                              onClick={() => askDelete(material)}
+                              className="text-red-600 hover:bg-red-50 hover:text-red-700 border-red-200"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                              Delete
                             </Button>
                           </div>
                         </TableCell>
@@ -525,6 +677,228 @@ export default function MasterMaterialsPage() {
             </Button>
             <Button onClick={handleSave} disabled={saving}>
               {saving ? 'Saving...' : editingMaterial ? 'Update' : 'Add Material'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Dialog */}
+      <Dialog open={importDialogOpen} onOpenChange={(o) => !importBusy && setImportDialogOpen(o)}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Import Materials from Excel</DialogTitle>
+            <DialogDescription>
+              Upload an .xlsx file with <span className="font-mono">Category</span>,{' '}
+              <span className="font-mono">Material Name</span>,{' '}
+              <span className="font-mono">Unit</span>, and{' '}
+              <span className="font-mono">Description</span> columns. Existing materials are
+              matched by category + name (case-insensitive).
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {!parsed && (
+              <div
+                onDragEnter={(e) => onDragEvent(e, true)}
+                onDragLeave={(e) => onDragEvent(e, false)}
+                onDragOver={(e) => onDragEvent(e, true)}
+                onDrop={onDrop}
+                className={
+                  'rounded-lg border-2 border-dashed p-8 text-center transition-colors ' +
+                  (dragActive ? 'border-blue-400 bg-blue-50' : 'border-slate-200 bg-slate-50')
+                }
+              >
+                <Upload className="h-10 w-10 mx-auto text-slate-400 mb-3" />
+                <p className="text-sm text-slate-600 mb-3">
+                  {importFileName ? `Selected: ${importFileName}` : 'Drag and drop an .xlsx file here, or'}
+                </p>
+                <label>
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls"
+                    onChange={onFileInput}
+                    className="hidden"
+                  />
+                  <Button type="button" variant="outline" asChild>
+                    <span className="cursor-pointer">Browse File</span>
+                  </Button>
+                </label>
+              </div>
+            )}
+
+            {parsed && (
+              <>
+                <div className="flex items-center gap-3 text-sm">
+                  <FileSpreadsheet className="h-4 w-4 text-slate-500" />
+                  <span className="font-medium">{importFileName}</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setParsed(null)
+                      setImportFileName(null)
+                    }}
+                    disabled={importBusy}
+                  >
+                    Choose another
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
+                    <div className="flex items-center gap-2 text-emerald-700">
+                      <CheckCircle2 className="h-4 w-4" />
+                      <span className="text-xs font-medium">New</span>
+                    </div>
+                    <p className="mt-1 text-2xl font-bold text-emerald-900">
+                      {parsed.toInsert.length}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-blue-200 bg-blue-50 p-3">
+                    <div className="flex items-center gap-2 text-blue-700">
+                      <AlertCircle className="h-4 w-4" />
+                      <span className="text-xs font-medium">Updates</span>
+                    </div>
+                    <p className="mt-1 text-2xl font-bold text-blue-900">{parsed.toUpdate.length}</p>
+                  </div>
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+                    <div className="flex items-center gap-2 text-amber-700">
+                      <XCircle className="h-4 w-4" />
+                      <span className="text-xs font-medium">Skipped</span>
+                    </div>
+                    <p className="mt-1 text-2xl font-bold text-amber-900">{parsed.skipped.length}</p>
+                  </div>
+                </div>
+
+                <div className="rounded-md border max-h-[40vh] overflow-y-auto">
+                  <Table>
+                    <TableHeader className="sticky top-0 bg-white">
+                      <TableRow>
+                        <TableHead className="w-[60px]">Row</TableHead>
+                        <TableHead className="w-[110px]">Action</TableHead>
+                        <TableHead>Category</TableHead>
+                        <TableHead>Material Name</TableHead>
+                        <TableHead className="w-[80px]">Unit</TableHead>
+                        <TableHead>Notes</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {parsed.toInsert.slice(0, 50).map((r) => (
+                        <TableRow key={`i${r.excelRow}`}>
+                          <TableCell className="text-slate-500">{r.excelRow}</TableCell>
+                          <TableCell>
+                            <Badge className="bg-emerald-100 text-emerald-700" variant="secondary">
+                              New
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{r.category}</TableCell>
+                          <TableCell>{r.name}</TableCell>
+                          <TableCell>{r.unit}</TableCell>
+                          <TableCell className="text-xs text-slate-500">
+                            {r.description ?? ''}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {parsed.toUpdate.slice(0, 50).map((r) => (
+                        <TableRow key={`u${r.excelRow}`}>
+                          <TableCell className="text-slate-500">{r.excelRow}</TableCell>
+                          <TableCell>
+                            <Badge className="bg-blue-100 text-blue-700" variant="secondary">
+                              {r.reactivate ? 'Restore' : 'Update'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{r.category}</TableCell>
+                          <TableCell>{r.name}</TableCell>
+                          <TableCell>{r.unit}</TableCell>
+                          <TableCell className="text-xs text-slate-500">
+                            {r.description ?? ''}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {parsed.skipped.slice(0, 50).map((s) => (
+                        <TableRow key={`s${s.excelRow}`}>
+                          <TableCell className="text-slate-500">{s.excelRow}</TableCell>
+                          <TableCell>
+                            <Badge className="bg-amber-100 text-amber-700" variant="secondary">
+                              Skip
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{s.data.category ?? ''}</TableCell>
+                          <TableCell>{s.data.name ?? ''}</TableCell>
+                          <TableCell>{s.data.unit ?? ''}</TableCell>
+                          <TableCell className="text-xs text-amber-700">{s.reason}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+                {parsed.toInsert.length + parsed.toUpdate.length + parsed.skipped.length > 150 && (
+                  <p className="text-xs text-slate-500">
+                    Showing first 50 of each category. All rows will be processed on confirm.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setImportDialogOpen(false)}
+              disabled={importBusy}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleConfirmImport}
+              disabled={
+                importBusy ||
+                !parsed ||
+                parsed.toInsert.length + parsed.toUpdate.length === 0
+              }
+            >
+              {importBusy ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Importing...
+                </>
+              ) : (
+                'Import'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(o) => !deleting && !o && setDeleteTarget(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete material?</DialogTitle>
+            <DialogDescription>
+              Remove <span className="font-medium">{deleteTarget?.name}</span> from the master
+              list. Existing GRN entries and workstation records that reference it are not
+              affected. The material can be restored by re-importing it from Excel.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteTarget(null)}
+              disabled={deleting}
+            >
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={confirmDelete} disabled={deleting}>
+              {deleting ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Trash2 className="h-4 w-4 mr-2" />
+              )}
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>
