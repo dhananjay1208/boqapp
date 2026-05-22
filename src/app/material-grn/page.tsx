@@ -79,6 +79,15 @@ import * as XLSX_STYLE from 'xlsx-js-style'
 import { supabase } from '@/lib/supabase'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import {
+  fetchMaterialComplianceMap,
+  seedMaterialComplianceFromGrn,
+  openMaterialComplianceDoc,
+  effectiveDocStatus,
+  docStatusYN,
+  type DocType as ComplianceDocType,
+  type LibraryRow as ComplianceLibraryRow,
+} from '@/lib/material-compliance'
 
 interface Site {
   id: string
@@ -250,6 +259,9 @@ export default function MaterialGRNPage() {
   // Invoice number search (for partial delivery - existing invoices)
   const [invoiceSearchOpen, setInvoiceSearchOpen] = useState(false)
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('')
+
+  // Material-level compliance library (from /document-compliance). Keyed by material_id.
+  const [complianceLibrary, setComplianceLibrary] = useState<Map<string, ComplianceLibraryRow>>(new Map())
   const [existingInvoices, setExistingInvoices] = useState<{ invoice_number: string; supplier_id: string; supplier_name: string; grn_date: string }[]>([])
 
   // Material search for line items
@@ -416,6 +428,22 @@ export default function MaterialGRNPage() {
           } else if (newDocs) {
             lineItemDocs = [...lineItemDocs, ...newDocs]
           }
+        }
+
+        // Pull the material-level compliance library for every material referenced here, so
+        // each slot can show "From compliance library" when the per-line-item upload is pending.
+        try {
+          const materialIds = Array.from(
+            new Set(
+              lineItemsData
+                .map((li: GRNLineItem) => li.material_id)
+                .filter((id): id is string => !!id)
+            )
+          )
+          const libMap = await fetchMaterialComplianceMap(materialIds)
+          setComplianceLibrary(libMap)
+        } catch (libErr) {
+          console.error('Error fetching compliance library:', libErr)
         }
       }
 
@@ -1042,6 +1070,26 @@ export default function MaterialGRNPage() {
 
       toast.success('Document uploaded successfully')
 
+      // Two-way sync: if the material-level library is still pending for this (material, doc_type),
+      // seed it with the same file so the Documents Compliance module and subsequent invoices
+      // see it as already-uploaded.
+      if (
+        selectedLineItem.material_id &&
+        (doc.document_type === 'test_certificate' || doc.document_type === 'tds')
+      ) {
+        try {
+          await seedMaterialComplianceFromGrn(
+            selectedLineItem.material_id,
+            doc.document_type as ComplianceDocType,
+            fileName,
+            file.name
+          )
+        } catch (seedErr) {
+          // Non-fatal — the GRN upload still succeeded.
+          console.error('Could not seed compliance library:', seedErr)
+        }
+      }
+
       const updatedDocs = selectedLineItem.documents.map(d =>
         d.id === doc.id ? { ...d, file_path: fileName, file_name: file.name, is_uploaded: true } : d
       )
@@ -1193,6 +1241,18 @@ export default function MaterialGRNPage() {
   }
 
   // Helper functions
+  // Resolve the material-compliance library slot for a given line-item doc row.
+  function libSlotFor(li: GRNLineItem, doc: LineItemDocument) {
+    const isLibDocType = doc.document_type === 'test_certificate' || doc.document_type === 'tds'
+    return isLibDocType && li.material_id
+      ? complianceLibrary.get(li.material_id)?.[doc.document_type as ComplianceDocType]
+      : undefined
+  }
+
+  function effectiveStatusFor(li: GRNLineItem, doc: LineItemDocument) {
+    return effectiveDocStatus(doc, libSlotFor(li, doc))
+  }
+
   function getInvoiceComplianceStatus(invoice: GRNInvoice) {
     let total = 0
     let completed = 0
@@ -1207,11 +1267,17 @@ export default function MaterialGRNPage() {
       li.documents
         .filter(doc => validDocTypes.includes(doc.document_type))
         .forEach(doc => {
-          if (!doc.is_applicable) {
-            na++
-          } else {
-            total++
-            if (doc.is_uploaded) completed++
+          switch (effectiveStatusFor(li, doc)) {
+            case 'uploaded':
+              total++
+              completed++
+              break
+            case 'na':
+              na++
+              break
+            case 'pending':
+              total++
+              break
           }
         })
     })
@@ -1224,15 +1290,24 @@ export default function MaterialGRNPage() {
     const validDocTypes: string[] = LINE_ITEM_DOC_TYPES.map(dt => dt.value)
     const validDocs = lineItem.documents.filter(d => validDocTypes.includes(d.document_type))
 
-    const applicable = validDocs.filter(d => d.is_applicable)
-    const uploaded = validDocs.filter(d => d.is_applicable && d.is_uploaded)
-    const na = validDocs.filter(d => !d.is_applicable)
-
-    return {
-      total: applicable.length,
-      completed: uploaded.length,
-      na: na.length
+    let total = 0
+    let completed = 0
+    let na = 0
+    for (const doc of validDocs) {
+      switch (effectiveStatusFor(lineItem, doc)) {
+        case 'uploaded':
+          total++
+          completed++
+          break
+        case 'na':
+          na++
+          break
+        case 'pending':
+          total++
+          break
+      }
     }
+    return { total, completed, na }
   }
 
   function getLegacyComplianceStatus(grn: LegacyMaterialGRN) {
@@ -1361,9 +1436,10 @@ export default function MaterialGRNPage() {
           'Amount (Excl GST)': lineItem.amount_without_gst,
           'Amount (Incl GST)': lineItem.amount_with_gst,
           'DC': dcStatus,
+          // MIR is not tracked in the compliance library — keep the per-line-item rule.
           'MIR': mirDoc ? (mirDoc.is_applicable ? (mirDoc.is_uploaded ? 'Y' : 'N') : 'NA') : 'N',
-          'Test Cert': testDoc ? (testDoc.is_applicable ? (testDoc.is_uploaded ? 'Y' : 'N') : 'NA') : 'N',
-          'TDS': tdsDoc ? (tdsDoc.is_applicable ? (tdsDoc.is_uploaded ? 'Y' : 'N') : 'NA') : 'N',
+          'Test Cert': testDoc ? docStatusYN(effectiveStatusFor(lineItem, testDoc)) : 'N',
+          'TDS': tdsDoc ? docStatusYN(effectiveStatusFor(lineItem, tdsDoc)) : 'N',
           'Notes': lineItem.notes || '',
           'Type': 'New',
         })
@@ -1535,8 +1611,8 @@ export default function MaterialGRNPage() {
         const testDoc = lineItem.documents.find(d => d.document_type === 'test_certificate')
         const tdsDoc = lineItem.documents.find(d => d.document_type === 'tds')
 
-        const testStatus = testDoc ? (testDoc.is_applicable ? (testDoc.is_uploaded ? 'Y' : 'N') : 'NA') : 'N'
-        const tdsStatus = tdsDoc ? (tdsDoc.is_applicable ? (tdsDoc.is_uploaded ? 'Y' : 'N') : 'NA') : 'N'
+        const testStatus = testDoc ? docStatusYN(effectiveStatusFor(lineItem, testDoc)) : 'N'
+        const tdsStatus = tdsDoc ? docStatusYN(effectiveStatusFor(lineItem, tdsDoc)) : 'N'
 
         row.push(dcStatus)
         row.push(testStatus)
@@ -2714,12 +2790,43 @@ export default function MaterialGRNPage() {
                         </div>
                       )}
 
-                      {!isNA && !isUploaded && (
-                        <p className="text-xs text-amber-600 flex items-center gap-1 mt-1">
-                          <AlertCircle className="h-3 w-3" />
-                          Pending
-                        </p>
-                      )}
+                      {!isNA && !isUploaded && (() => {
+                        const libSlot =
+                          selectedLineItem?.material_id &&
+                          (docType.value === 'test_certificate' || docType.value === 'tds')
+                            ? complianceLibrary.get(selectedLineItem.material_id)?.[
+                                docType.value as ComplianceDocType
+                              ]
+                            : undefined
+                        if (libSlot?.status === 'uploaded' && libSlot.file_path) {
+                          return (
+                            <div className="flex items-center gap-1 text-xs mt-1">
+                              <FileCheck className="h-3 w-3 text-blue-600 shrink-0" />
+                              <span className="text-blue-700">From compliance library:</span>
+                              <button
+                                onClick={() => openMaterialComplianceDoc(libSlot.file_path!)}
+                                className="text-blue-600 hover:underline truncate max-w-[180px]"
+                              >
+                                {libSlot.file_name}
+                              </button>
+                            </div>
+                          )
+                        }
+                        if (libSlot?.status === 'not_applicable') {
+                          return (
+                            <p className="text-xs text-slate-500 flex items-center gap-1 mt-1">
+                              <Ban className="h-3 w-3" />
+                              N/A from compliance library
+                            </p>
+                          )
+                        }
+                        return (
+                          <p className="text-xs text-amber-600 flex items-center gap-1 mt-1">
+                            <AlertCircle className="h-3 w-3" />
+                            Pending
+                          </p>
+                        )
+                      })()}
                     </div>
 
                     <div className="flex items-center gap-1 flex-wrap justify-end">

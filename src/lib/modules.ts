@@ -16,6 +16,7 @@ import {
   Users,
   KeyRound,
   Briefcase,
+  ShieldCheck,
 } from 'lucide-react'
 
 export type ModuleKey =
@@ -27,6 +28,7 @@ export type ModuleKey =
   | 'workstations'
   | 'material-grn'
   | 'inventory'
+  | 'document-compliance'
   | 'expenses'
   | 'expense-dashboard'
   | 'supplier-invoices'
@@ -67,6 +69,7 @@ export const MODULES: ModuleDef[] = [
   // Materials & Inventory
   { key: 'material-grn', name: 'Material GRN', description: 'Goods receipt notes & compliance docs', href: '/material-grn', icon: Receipt, tint: 'bg-amber-50 text-amber-600' },
   { key: 'inventory', name: 'Inventory', description: 'Aggregated material stock', href: '/inventory', icon: Warehouse, tint: 'bg-yellow-50 text-yellow-700' },
+  { key: 'document-compliance', name: 'Documents Compliance', description: 'Test certificates & TDS per material', href: '/document-compliance', icon: ShieldCheck, tint: 'bg-emerald-50 text-emerald-600' },
 
   // Finance & Billing
   { key: 'ra-billing', name: 'RA Billing', description: 'BOQ rates, amounts, GST, actuals', href: '/ra-billing', icon: IndianRupee, tint: 'bg-green-50 text-green-600' },
@@ -98,7 +101,7 @@ export const MODULE_GROUPS: ModuleGroup[] = [
   {
     name: 'Materials & Inventory',
     pillColor: 'bg-amber-50 text-amber-700 border-amber-200',
-    moduleKeys: ['material-grn', 'inventory'],
+    moduleKeys: ['material-grn', 'inventory', 'document-compliance'],
   },
   {
     name: 'Finance & Billing',
@@ -129,6 +132,7 @@ export function moduleKeyForPath(pathname: string): ModuleKey | null {
   if (pathname.startsWith('/workstations')) return 'workstations'
   if (pathname.startsWith('/material-grn')) return 'material-grn'
   if (pathname.startsWith('/inventory')) return 'inventory'
+  if (pathname.startsWith('/document-compliance')) return 'document-compliance'
   if (pathname.startsWith('/expense-dashboard')) return 'expense-dashboard'
   if (pathname.startsWith('/expenses')) return 'expenses'
   if (pathname.startsWith('/supplier-invoices')) return 'supplier-invoices'

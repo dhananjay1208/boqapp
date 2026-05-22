@@ -38,6 +38,7 @@ import {
   LogOut,
   KeyRound,
   Briefcase,
+  ShieldCheck,
 } from 'lucide-react'
 import { clearSession, getSession, hasModuleAccess, isAdmin, isSuperuser, type Session } from '@/lib/auth'
 import type { ModuleKey } from '@/lib/modules'
@@ -58,6 +59,7 @@ const navigation: NavItem[] = [
   { name: 'RA Billing', href: '/ra-billing', icon: IndianRupee, moduleKey: 'ra-billing' },
   { name: 'Workstations', href: '/workstations', icon: Wrench, moduleKey: 'workstations' },
   { name: 'Material GRN', href: '/material-grn', icon: Receipt, moduleKey: 'material-grn' },
+  { name: 'Documents Compliance', href: '/document-compliance', icon: ShieldCheck, moduleKey: 'document-compliance' },
   { name: 'Inventory', href: '/inventory', icon: Warehouse, moduleKey: 'inventory' },
   { name: 'Expenses Recording', href: '/expenses', icon: Wallet, moduleKey: 'expenses' },
   { name: 'Expense Dashboard', href: '/expense-dashboard', icon: PieChart, moduleKey: 'expense-dashboard' },
