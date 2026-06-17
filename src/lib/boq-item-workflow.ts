@@ -64,7 +64,7 @@ export interface BoqcMaterial {
   material_name: string
   unit: string | null
   estimated_quantity: number | null
-  source: 'ai' | 'manual' | 'ai_edited'
+  source: 'ai' | 'manual' | 'ai_edited' | 'grn'
   is_approved: boolean
   shared_with_vendor_at: string | null
   notes: string | null
@@ -196,6 +196,35 @@ export async function addBoqcMaterial(input: {
     .single()
   if (error) throw error
   return coerceBoqcMaterial(data)
+}
+
+/**
+ * Best-effort, idempotent: ensure a boqc_materials row exists for a material received via
+ * a GRN line item that's linked to a BOQ line item. Never throws — a compliance side-effect
+ * must not break the GRN save — and never overwrites an existing row (ignoreDuplicates), so a
+ * material the engineer already added/approved is left untouched.
+ */
+export async function ensureBoqcMaterialFromGrn(input: {
+  boq_line_item_id: string
+  material_id: string
+  material_name: string
+  unit: string | null
+}): Promise<void> {
+  try {
+    const { error } = await supabase.from('boqc_materials').upsert(
+      {
+        boq_line_item_id: input.boq_line_item_id,
+        material_id: input.material_id,
+        material_name: input.material_name,
+        unit: input.unit,
+        source: 'grn',
+      },
+      { onConflict: 'boq_line_item_id,material_id', ignoreDuplicates: true }
+    )
+    if (error) throw error
+  } catch (err) {
+    console.error('ensureBoqcMaterialFromGrn failed (non-blocking):', err)
+  }
 }
 
 export async function updateBoqcMaterial(

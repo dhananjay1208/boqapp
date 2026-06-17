@@ -67,6 +67,7 @@ interface GRNLineItem {
   amount_without_gst: number
   amount_with_gst: number
   notes: string | null
+  boq_line_item_id: string | null
   documents: GRNLineItemDocument[]
 }
 
@@ -104,6 +105,7 @@ interface MIRReportRow {
   material: string
   qty: number
   unit: string
+  boqItem: string
   dc: 'Y' | 'N' | 'NA'
   testCert: 'Y' | 'N' | 'NA'
   tds: 'Y' | 'N' | 'NA'
@@ -120,6 +122,7 @@ export default function MIRReportsPage() {
   const [loadingInvoices, setLoadingInvoices] = useState(false)
   const [generatingPdf, setGeneratingPdf] = useState(false)
   const [complianceLibrary, setComplianceLibrary] = useState<Map<string, ComplianceLibraryRow>>(new Map())
+  const [boqItemMap, setBoqItemMap] = useState<Map<string, string>>(new Map())
 
   // Fetch sites on mount
   useEffect(() => {
@@ -146,7 +149,7 @@ export default function MIRReportsPage() {
       setReportData([])
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMirDate, invoiceList, complianceLibrary])
+  }, [selectedMirDate, invoiceList, complianceLibrary, boqItemMap])
 
   async function fetchSites() {
     try {
@@ -227,6 +230,32 @@ export default function MIRReportsPage() {
       } catch (libErr) {
         console.error('Error fetching compliance library:', libErr)
       }
+
+      // Map linked BOQ line item UUIDs -> item numbers for the BOQ Item column.
+      try {
+        const boqIds = Array.from(
+          new Set(
+            transformedData.flatMap((inv: GRNInvoice) =>
+              inv.line_items.map((li) => li.boq_line_item_id).filter((id): id is string => !!id)
+            )
+          )
+        )
+        if (boqIds.length > 0) {
+          const { data: boqRows } = await supabase
+            .from('boq_line_items')
+            .select('id, item_number')
+            .in('id', boqIds)
+          const map = new Map<string, string>()
+          for (const r of (boqRows || []) as { id: string; item_number: string }[]) {
+            map.set(r.id, r.item_number)
+          }
+          setBoqItemMap(map)
+        } else {
+          setBoqItemMap(new Map())
+        }
+      } catch (boqErr) {
+        console.error('Error fetching BOQ item numbers:', boqErr)
+      }
     } catch (error) {
       toast.error('Failed to load invoices')
     } finally {
@@ -268,6 +297,7 @@ export default function MIRReportsPage() {
           material: li.material_name,
           qty: li.quantity,
           unit: li.unit,
+          boqItem: li.boq_line_item_id ? (boqItemMap.get(li.boq_line_item_id) || '') : '',
           dc: dcStatus,
           testCert: testStatus,
           tds: tdsStatus
@@ -307,13 +337,14 @@ export default function MIRReportsPage() {
       // Table
       autoTable(doc, {
         startY: 60,
-        head: [['S.No', 'Invoice No.', 'Material', 'Qty', 'Unit', 'DC', 'Test Cert', 'TDS']],
+        head: [['S.No', 'Invoice No.', 'Material', 'Qty', 'Unit', 'BOQ Item', 'DC', 'Test Cert', 'TDS']],
         body: reportData.map(row => [
           row.sno,
           row.invoiceNumber,
           row.material,
           row.qty,
           row.unit,
+          row.boqItem,
           row.dc,
           row.testCert,
           row.tds
@@ -327,14 +358,15 @@ export default function MIRReportsPage() {
           fontSize: 9
         },
         columnStyles: {
-          0: { cellWidth: 15, halign: 'center' },  // S.No
-          1: { cellWidth: 25 },  // Invoice No.
-          2: { cellWidth: 55 },  // Material
-          3: { cellWidth: 20, halign: 'right' },  // Qty
-          4: { cellWidth: 20, halign: 'center' },  // Unit
-          5: { cellWidth: 15, halign: 'center' },  // DC
-          6: { cellWidth: 20, halign: 'center' },  // Test Cert
-          7: { cellWidth: 15, halign: 'center' },  // TDS
+          0: { cellWidth: 14, halign: 'center' },  // S.No
+          1: { cellWidth: 24 },  // Invoice No.
+          2: { cellWidth: 45 },  // Material
+          3: { cellWidth: 16, halign: 'right' },  // Qty
+          4: { cellWidth: 16, halign: 'center' },  // Unit
+          5: { cellWidth: 18, halign: 'center' },  // BOQ Item
+          6: { cellWidth: 14, halign: 'center' },  // DC
+          7: { cellWidth: 18, halign: 'center' },  // Test Cert
+          8: { cellWidth: 14, halign: 'center' },  // TDS
         },
         margin: { left: 14, right: 14 }
       })
@@ -572,6 +604,7 @@ export default function MIRReportsPage() {
                       <TableHead>Material</TableHead>
                       <TableHead className="w-20 text-right">Qty</TableHead>
                       <TableHead className="w-20 text-center">Unit</TableHead>
+                      <TableHead className="w-20 text-center">BOQ Item</TableHead>
                       <TableHead className="w-16 text-center">DC</TableHead>
                       <TableHead className="w-24 text-center">Test Cert</TableHead>
                       <TableHead className="w-16 text-center">TDS</TableHead>
@@ -585,6 +618,7 @@ export default function MIRReportsPage() {
                         <TableCell>{row.material}</TableCell>
                         <TableCell className="text-right">{row.qty}</TableCell>
                         <TableCell className="text-center">{row.unit}</TableCell>
+                        <TableCell className="text-center font-mono text-xs">{row.boqItem || '-'}</TableCell>
                         <TableCell className="text-center">
                           <span className={
                             row.dc === 'Y' ? 'text-green-600 font-medium' :
