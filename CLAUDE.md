@@ -1,62 +1,120 @@
 # BOQ Management System - Project Documentation
 
 ## Overview
-A construction project management application for tracking BOQ (Bill of Quantities), material receipts, inventory, expenses, and supplier invoices. Built with Next.js 16, React 19, Supabase, and Tailwind CSS.
+A construction project management application for tracking BOQ (Bill of Quantities), material receipts, inventory, expenses, supplier invoices, and material compliance documents. Multi-tenant SaaS — sold per-site to customer companies (e.g. EFC) by **Cogneta Automation**. Built with Next.js 16, React 19, Supabase, and Tailwind CSS.
 
 ## Tech Stack
 - **Framework**: Next.js 16.1.1 (App Router)
 - **UI**: React 19, Tailwind CSS 4, Shadcn UI components
 - **Database**: Supabase (PostgreSQL)
 - **Storage**: Supabase Storage (for document uploads)
+- **Auth**: Demo-grade bcrypt-against-`tenant_users` with permissive RLS (see Auth section)
 - **Icons**: Lucide React
-- **Excel**: xlsx library for import/export
-- **PDF**: jsPDF with jspdf-autotable for PDF generation
+- **Excel**: `xlsx` (and `xlsx-js-style` for richly-formatted MIR Overview) — import + export
+- **PDF**: jsPDF + jspdf-autotable for new PDFs; pdf-lib for merging existing PDFs into a single document
 - **Charts**: Recharts
 - **Forms**: React Hook Form
 - **Notifications**: Sonner (toast)
+- **bcrypt**: `bcryptjs` (browser-safe; used by `src/lib/auth.ts`)
 
 ## Project Structure
 ```
 app/
 ├── src/
-│   ├── app/                    # Next.js App Router pages
-│   │   ├── layout.tsx          # Root layout with Sidebar
-│   │   ├── page.tsx            # Dashboard
-│   │   ├── sites/              # Sites management
-│   │   ├── boq/                # BOQ Management
-│   │   ├── boq-progress/       # BOQ Progress tracking
-│   │   ├── ra-billing/         # RA Billing (extended BOQ with rates/actuals)
-│   │   ├── workstations/       # Workstation progress tracking
-│   │   ├── material-grn/       # GRN (Goods Receipt Note)
-│   │   ├── inventory/          # Inventory view
-│   │   ├── expenses/           # Expense recording
-│   │   ├── expense-dashboard/  # Expense analytics
-│   │   ├── supplier-invoices/  # Supplier invoice payments
-│   │   ├── checklists/         # Checklist management
-│   │   ├── reports/            # Reports
-│   │   │   └── mir/            # MIR Reports (PDF generation)
-│   │   └── master-data/        # Master data
-│   │       ├── workstations/   # Workstation types
-│   │       ├── materials/      # Material master list
-│   │       ├── equipment/      # Equipment master
-│   │       ├── suppliers/      # Supplier master
-│   │       ├── labour-contractors/   # Labour contractors
-│   │       ├── manpower-categories/  # Manpower categories
-│   │       └── manpower/       # Manpower rates
+│   ├── app/                       # Next.js App Router pages
+│   │   ├── layout.tsx             # Root layout: AuthGate + AppShell
+│   │   ├── page.tsx               # Module landing (X5-style grouped cards)
+│   │   ├── login/                 # Login screen (no sidebar)
+│   │   ├── dashboard/             # KPI dashboard (was at / pre-multi-tenant)
+│   │   ├── sites/                 # Sites management (tenant-scoped + activation-code gate on new)
+│   │   ├── boq/                   # BOQ Management
+│   │   ├── boq-progress/          # BOQ Progress tracking
+│   │   ├── boq-item-compliance/   # BOQ Item Compliance — per-line-item materials, TDS, test certs, MB/RA (manage)
+│   │   ├── boq-item-overview/     # BOQ Item Overview — read-only per-line-item compliance & billing dashboard
+│   │   ├── ra-billing/            # RA Billing
+│   │   ├── workstations/          # Workstation progress tracking
+│   │   ├── api/
+│   │   │   └── boq-materials/recommend/  # POST route handler: AI material recommendation (Claude Sonnet + heuristic fallback)
+│   │   ├── material-grn/          # GRN (with library-aware compliance slots + exports)
+│   │   ├── inventory/             # Inventory view
+│   │   ├── document-compliance/   # Documents Compliance module (per-material Test Cert / TDS)
+│   │   ├── expenses/              # Expense recording
+│   │   ├── expense-dashboard/     # Expense analytics
+│   │   ├── supplier-invoices/     # Supplier invoice payments
+│   │   ├── checklists/            # Checklist management
+│   │   ├── reports/
+│   │   │   └── mir/               # MIR Reports (PDF, library-aware)
+│   │   ├── master-data/           # Master data
+│   │   │   ├── workstations/
+│   │   │   ├── materials/         # incl. Excel template/import/export + labelled delete
+│   │   │   ├── equipment/
+│   │   │   ├── suppliers/
+│   │   │   ├── labour-contractors/
+│   │   │   ├── manpower-categories/
+│   │   │   └── manpower/
+│   │   └── admin/                 # Tenant admin pages
+│   │       ├── users/             # Per-tenant user + module-access CRUD (admin role)
+│   │       ├── codes/             # Issue site activation codes (superuser only)
+│   │       └── tenants/           # Create customer tenants (superuser only)
 │   ├── components/
-│   │   ├── layout/             # Sidebar, Mobile Nav, Header
-│   │   └── ui/                 # Shadcn UI components
+│   │   ├── auth/                  # AuthGate wrapper
+│   │   ├── layout/                # Sidebar, Mobile Nav, Header, AppShell
+│   │   └── ui/                    # Shadcn UI components
 │   ├── lib/
-│   │   ├── supabase.ts         # Supabase client
-│   │   ├── excel-parser.ts     # BOQ Excel import parser (multi-format)
-│   │   └── utils.ts            # Utility functions (cn)
+│   │   ├── supabase.ts            # Supabase client (anon key)
+│   │   ├── auth.ts                # Login, session, role + module-access helpers
+│   │   ├── modules.ts             # ModuleKey, MODULES, MODULE_GROUPS, moduleKeyForPath
+│   │   ├── landing-backdrop.tsx   # Shared photo+SVG backdrop for /login + /
+│   │   ├── materials-excel.ts     # Material List template/export/import parsing
+│   │   ├── material-compliance.ts # Library helpers + effectiveDocStatus + docStatusYN
+│   │   ├── material-compliance-pdf.ts  # Merge all uploaded compliance docs into one PDF
+│   │   ├── excel-parser.ts        # BOQ Excel import parser (multi-format, customer-tolerant; exports parseBOQRows)
+│   │   ├── boq-item-workflow.ts   # BOQ Item Compliance/Overview: queries, doc/RA helpers, GRN auto-add, keyword scorer
+│   │   ├── upto-date.ts           # Shared "Upto Date" computation (JMR-approved else workstations)
+│   │   ├── checklist-parser.ts    # Tolerant checklist Excel parser
+│   │   ├── checklist-pdf.ts       # Checklist PDF generator
+│   │   └── utils.ts               # Utility functions (cn)
 │   └── types/
-│       └── database.ts         # TypeScript types
+│       └── database.ts            # TypeScript types
+├── public/
+│   ├── landing-bg.png             # Backdrop photo for /login + /
+│   └── (next.js stock SVGs)
+├── scripts/                       # Node one-shots (run as `node scripts/foo.js` from app/)
+│   ├── hash-seed-passwords.js     # Generates bcrypt hashes for the seed tenant_users rows
+│   └── update-cogneta-name.js     # Template: data-only updates via anon key (RLS is permissive)
 ├── supabase/
-│   ├── schema.sql              # Main database schema
-│   └── migrations/             # Database migrations
-└── public/                     # Static assets
+│   ├── schema.sql                 # Main database schema
+│   └── migrations/                # Database migrations (run manually in SQL Editor)
+└── public/                        # Static assets
 ```
+
+## Authentication & Multi-Tenancy
+
+### Model
+- **`tenants`** (migration 028) — one row per customer company. `company_code` is what users type at login (e.g. `Cogneta`, `EFC`); `company_name` is the display label shown on the landing header.
+- **`tenant_users`** — per-tenant users with bcrypt-hashed passwords, role (`user` | `admin` | `superuser`), and `allowed_modules` (a `TEXT[]` of `ModuleKey` values).
+- **`site_activation_codes`** — single-use codes issued by Cogneta when a customer pays for a site. Required on `/sites/new` for non-superuser tenants.
+- **`sites.tenant_id`** — the only tenant-scoping column. Every existing site was backfilled to the Cogneta tenant. **`master_materials`, `material_compliance_documents`, and other master tables are shared across tenants.**
+
+### Login flow
+- 2 fields: **Company Code** + **Password**. Password identifies the user — `login()` in `src/lib/auth.ts` fetches every active user in the tenant and bcrypt-compares against each. There's no separate username field at login.
+- Session is stored in `localStorage` under `boqm.session` with a 24-hour expiry. Contains `{ tenant_id, tenant_code, tenant_name, user_id, username, role, allowed_modules, expires_at }`.
+- `AuthGate` (`src/components/auth/auth-gate.tsx`) wraps every page (via `app/layout.tsx`). Redirects to `/login` when no session; renders a friendly access-denied card when the user lacks the module's key in their `allowed_modules` (or the required role for `/admin/*`).
+
+### Roles
+- **`superuser`** (Cogneta only) — sees every module + every tenant's data; bypasses activation-code requirement on `/sites/new`; can manage tenants, activation codes, and any tenant's users.
+- **`admin`** — can manage users + module access for their own tenant via `/admin/users`.
+- **`user`** — module access controlled by `allowed_modules`.
+
+### Seed
+Migration 028 seeds:
+- Tenant `Cogneta` / `Cogneta Automation`, user `Cogneta / Cogneta` (superuser, all modules).
+- Tenant `EFC` / `EFC`, user `admin / admin` (admin, modules: dashboard, sites, admin-users).
+
+bcrypt hashes are generated by `scripts/hash-seed-passwords.js` and inlined into the migration.
+
+### Security caveat — pilot-only auth
+All app tables use `FOR ALL USING (true)` RLS — anyone with the Supabase URL + anon key can read/write any row. The Supabase anon key is in the browser. Acceptable for a trusted EFC-style pilot; **not internet-safe**. A full Supabase-Auth + per-tenant RLS rewrite is the deferred Phase 2.
 
 ## Key Modules
 
@@ -96,22 +154,29 @@ app/
 - Data comes from columns on `boq_line_items`:
   - Standard: `rate`, `total_amount`, `gst_amount`, `total_amount_with_gst`, `actual_quantity`, `actual_amount`, `actual_amount_with_gst`
   - S&I: `qty_ext`, `supply_rate`, `installation_rate`, `supply_amount`, `installation_amount`, `actual_supply_amount`, `actual_installation_amount`, `actual_total_amount`
-- **Excel Parser** (`src/lib/excel-parser.ts`):
-  - Detects billing type: S&I templates detected by SUPPLY/INSTALLATION header keywords
-  - Detects extended 12-column template dynamically by scanning header keywords (RATE, AMOUNT, GST, ACTUAL)
-  - Supports column offset detection (S.No may be in column A or B)
-  - Supports multi-row headers (merges header row + continuation row)
-  - Handles three BOQ Excel formats:
-    - **Standard** (LA CIVIL WORK): Whole-number S.No = headline, decimal S.No (1.1, 1.2) = line items
-    - **Letter sub-items** (LA PLANTATION): Letter-based S.No like "7.a", "7.b" = line items under parent headline
-    - **Landscape** (LA LANDSCAPE): Headline rows have S.No but no data; actual data rows have **no S.No** — parser attaches these to the current headline
-  - Rows without S.No: if a headline is active, attached as line items; otherwise grouped into orphan sections (e.g., "NT ITEMS", "Miscellaneous")
-  - Total rows (description or S.No contains "total") are skipped and close the current headline
-  - Orphan sections get auto-generated headline numbers after the last real headline
+- **Excel Parser** (`src/lib/excel-parser.ts`): generalized, customer-tolerant, fully backward-compatible. The pure core is exported as `parseBOQRows(rows, sheetName, warnings)` (used by both the `File`-based `parseBOQExcel` and headless tests).
+  - **Header detection** normalizes the S.No cell (`replace(/[\s.]/g,'')`) so `S.No` / `SL.NO` / **`SR. NO.`** all match. Sheets missing an item/qty header are skipped (`return null`).
+  - **Dynamic keyword column mapping** for item / specification / location / unit / qty (handles an extra SPECIFICATION column and "FINAL QTY"), with a **legacy fixed-position fallback** (desc=1, loc=2, unit=3, qty=4) so old LA-format files still parse.
+  - **Description composition**: `ITEM — SPECIFICATION/Product Description (Make: …)` folded into the single `description` (richest text for the AI material recommendation).
+  - **S.No cleaning**: rounds float noise (`2.0199999999999996 → "2.02"`); whole-number rows with no measurable data = headline, with data = flat-list line item (collapsed under one synthetic headline, e.g. Sanitary Fitting); decimal rows = line items.
+  - Billing type: S&I detected by SUPPLY/INSTALLATION header keywords; extended-standard by RATE/AMOUNT/GST/ACTUAL keywords. Column-offset + multi-row header merge retained. Letter sub-items (`7.a`), orphan/landscape sections, and total-row skipping all retained.
+  - **Only the main BOQ tab is imported** — `parseBOQExcel` stops at the first BOQ-signature sheet, so supplementary tabs (OEM-Supply, Make List, etc.) in customer workbooks are ignored. `ParsedBOQ` carries `sheetName`; the upload page imports only the selected sheet (default first).
+
+### 2c. BOQ Item Compliance & Overview (`/boq-item-compliance`, `/boq-item-overview`)
+A per-BOQ-line-item workflow layered **read-only on the existing `boq_line_items`** (does not touch BOQ Management / RA Billing / BOQ Progress). New tables are `boqc_*` (migrations 030–033); all queries/helpers live in `src/lib/boq-item-workflow.ts`.
+
+- **BOQ Item Compliance** (manage): cascading Site → Package → Headline → Line Item selector, then three stages:
+  - **Materials** — `boqc_materials`. An **AI Recommend** button POSTs the line-item description + a keyword-filtered candidate set of `master_materials` to `/api/boq-materials/recommend`; the engineer reviews/edits/approves (`is_approved`). Materials can also be added manually or as free-text. `source` ∈ `ai | manual | ai_edited | grn`; a badge shows provenance.
+  - **TDS & Test Certificates** — `boqc_documents` (per approved material, mirrors `material_compliance_documents` so `effectiveDocStatus` is reused). A test certificate uploaded against a **GRN line item linked to this BOQ line item** surfaces here automatically ("From GRN").
+  - **MB Sheet & RA Billing** — `boqc_ra_entries`: RA1/RA2/RA3 with new/previous/up-to-date quantities (server-recomputed via `recomputeRaCumulatives`) and an attached MB-sheet Excel.
+- **BOQ Item Overview** (read-only): per-line-item dashboard — materials identified/approved, TDS uploaded, test certs present (direct or GRN-sourced), RA count, up-to-date, remaining, billed %, with Excel export.
+- **AI route** `src/app/api/boq-materials/recommend/route.ts` (Node runtime, deploys as a Netlify function): uses `@anthropic-ai/sdk`, model `claude-sonnet-4-6`, forced tool-use for structured JSON; validates returned `material_id`s against the candidate set; falls back to the keyword scorer (`heuristicRecommend`) when `ANTHROPIC_API_KEY` is missing/quota-hit. **Add `ANTHROPIC_API_KEY` to `.env.local` + the Netlify env** (build + functions); without it the feature degrades to keyword matching.
+- **GRN integration**: when a GRN line item is saved with a BOQ line item linked, `ensureBoqcMaterialFromGrn()` auto-adds that material under BOQ Item Compliance (pending, `source='grn'`) — idempotent (`ignoreDuplicates` on `(boq_line_item_id, material_id)`, never overwrites an existing/approved row) and best-effort (never blocks the GRN save).
 
 ### 3. Material GRN (`/material-grn`)
 - Invoice-based goods receipt notes
 - Multiple materials per invoice
+- **BOQ line item link (optional)**: each line item can be linked to a BOQ line item (`grn_line_items.boq_line_item_id`, migration 031) via a searchable selector scoped to the invoice's site. On save (both create + edit paths), the received material is auto-added to BOQ Item Compliance for that line item (`ensureBoqcMaterialFromGrn`, see §2c), and the BOQ number appears on the MIR Overview Excel + per-MIR PDF.
 - **Invoice Date** and **GRN Date** tracking (separate fields)
 - Document uploads:
   - **Invoice level**: DC (Delivery Challan)
@@ -122,15 +187,35 @@ app/
   - Invoice-level: DC document (counted in invoice totals)
   - Line item-level: Test Cert + TDS per material (2 docs each)
   - Auto-creates document placeholders for imported data on first access
+- **Two-way sync with Documents Compliance module** (since migration 029):
+  - On page load, `fetchMaterialComplianceMap(materialIds)` builds a `Map<material_id, { test_certificate?, tds? }>` from the material-level library and stores it in component state.
+  - Line-item doc slots that have no per-invoice file fall back to the library state — they render `From compliance library: <filename>` with a clickable view link instead of the "Pending" warning.
+  - When a user uploads at the GRN line-item level, `seedMaterialComplianceFromGrn()` populates the library row **only if its current status is `pending`** (i.e., the very first upload for that material seeds the library; subsequent uploads stay as per-invoice overrides).
+  - Library `not_applicable` propagates to line-item slot rendering as `N/A from compliance library`.
+- **Effective doc status helper**: `effectiveDocStatus(doc, libSlot)` in `src/lib/material-compliance.ts` unifies the rule across **badges, Standard GRN Excel, MIR Overview Excel, and MIR Reports PDF**. Returns `'uploaded' | 'na' | 'pending'`; uploads always win over NA. `docStatusYN()` adapts that to `'Y' | 'N' | 'NA'` for the export columns. **Always use this helper rather than open-coding the rule** — bugs have been re-introduced twice when call sites diverged.
+  - The local adapter inside `src/app/material-grn/page.tsx` is `effectiveStatusFor(li, doc)` — it looks up the library slot via `complianceLibrary.get(li.material_id)?.[doc.document_type]` and delegates to `effectiveDocStatus`.
+- The MIR doc-type and the invoice-level DC are **not** library-tracked and keep their original per-invoice semantics.
 - **Export Reports**:
-  - **Export Report**: Standard GRN report with all details
+  - **Export Report**: Standard GRN report with all details. Test Cert / TDS columns are library-aware via `effectiveStatusFor`.
   - **MIR Overview**: Styled Excel export (via `xlsx-js-style`) with materials grouped by GRN date
     - Title row "MATERIAL INSPECTION REPORT" and site info row at top
     - MIR references (MIR 1, MIR 2, etc.) based on unique GRN dates, ascending by date (MIR 1 = earliest)
     - Column order is descending (latest date first), but MIR numbers are ascending by date
+    - **BOQ Item** column (after Unit) — the linked BOQ line item number; `exportMIROverview` maps `grn_line_items.boq_line_item_id` → `boq_line_items.item_number`
     - Quantity distribution across dates
-    - Compliance status (Y/N/NA) for DC, Test Cert, TDS
+    - Compliance status (Y/N/NA) for DC, Test Cert, TDS — Test Cert / TDS are library-aware
     - Styled with header colors, borders, invoice grouping borders
+
+### 3b. Documents Compliance (`/document-compliance`)
+- Per-material master library of Test Certificate + TDS documents. Separate from the per-invoice docs in `grn_line_item_documents`.
+- Table grouped by category. Each material row has two status cells (Test Cert | TDS), each in one of three states:
+  - **Uploaded** — green badge + filename, with `View` (signed URL → new tab), `Replace`, and a revert-to-pending button.
+  - **Pending** — slate badge + `Upload` button (file picker), plus `Mark N/A` link.
+  - **Not applicable** — amber badge + `Mark pending` link to re-enable uploads.
+- **Add materials** dialog: searchable multi-select against the list of materials not yet enrolled. Confirming creates 2 rows per material (one per doc type) at `status='pending'` via `enrolMaterials()`.
+- **Export all as PDF**: builds a single merged PDF (`src/lib/material-compliance-pdf.ts`). Cover page + per-material section header + the actual document. PDFs are merged via `pdf-lib.copyPages()`. PNG / JPG are embedded as scaled pages via `embedPng` / `embedJpg`. Other formats (doc/docx/xls/xlsx) get a placeholder page. Same merge pattern as the MIR Reports PDF.
+- **Storage path**: `compliance-docs/material-compliance/{material_id}/{doc_type}_{timestamp}.{ext}`. Lives alongside the existing `compliance-docs/grn_invoice/...` and `compliance-docs/grn_line_item/...` prefixes — no collisions.
+- **Compliance docs are shared across tenants** today (no `tenant_id` on `material_compliance_documents`) — matches the master data model.
 
 ### 4. Inventory (`/inventory`)
 - Aggregated material stock from GRN entries
@@ -191,7 +276,7 @@ Reports module with expandable submenu:
   - Preview table showing materials for selected MIR
   - PDF download with:
     - Header: Site name, MIR reference, date
-    - Table: S.No, Material, Qty, Unit, DC, Test Cert, TDS
+    - Table: S.No, Invoice No., Material, Qty, Unit, **BOQ Item** (linked line item number), DC, Test Cert, TDS
     - Footer: Signature sections (Prepared by / Approved by)
 
 ### 10. Workstation Management (`/workstations`)
@@ -219,7 +304,12 @@ Reports module with expandable submenu:
 
 ### 11. Master Data (`/master-data/*`)
 - **Workstations** (`/master-data/workstations`): Workstation name, description
-- **Materials** (`/master-data/materials`): Category, name, unit, HSN code
+- **Materials** (`/master-data/materials`): Category, name, unit, description.
+  - Page header has four buttons: **Template** (download an empty-but-headered .xlsx with example rows), **Import** (drag-drop or browse → preview dialog showing per-row action: New / Update / Restore / Skip — counts in summary tiles), **Export** (full active list, sorted Category → Name), **+ Add Material**.
+  - Import matches existing rows on `(category, name)` case-insensitive. A match against a soft-deleted row reactivates it (handy for restoring deletions).
+  - Inserts go in batches of 500 to stay under Supabase payload limits. Updates loop per-row because `supabase.update()` doesn't accept array payloads.
+  - Helpers live in `src/lib/materials-excel.ts`: `parseMaterialsExcel`, `exportMaterialsXlsx`, `downloadMaterialsTemplate`. Header detection scans the first 10 rows for a row containing Category / Name / Unit in any column order — tolerates user re-arranging columns.
+  - **Edit / Delete action buttons are labelled outline buttons**, not icon-only — see [[subtle-styles-and-labelled-buttons]] memory. Delete uses a shadcn `Dialog` for confirmation (not native `window.confirm`); soft-delete (`is_active = false`) — FK references in GRN line items and workstation consumption are preserved.
 - **Suppliers** (`/master-data/suppliers`): Name, GSTIN, address, contact
 - **Equipment Types** (`/master-data/equipment-types`): Equipment type names (JCB, Roller, Crane, etc.)
 - **Equipment Rates** (`/master-data/equipment`):
@@ -238,12 +328,34 @@ Reports module with expandable submenu:
 
 ## Database Tables
 
+### Multi-Tenancy Tables (migration 028)
+- `tenants` - customer companies (`company_code` typed at login, `company_name` shown on landing)
+- `tenant_users` - per-tenant users with bcrypt `password_hash`, `role` (user/admin/superuser), `allowed_modules` TEXT[]
+- `site_activation_codes` - single-use codes, FK to tenants, unique `code`, `used_at` + `used_by_site_id` consumed on /sites/new
+
 ### Core Tables
 - `sites` - Construction sites
+  - `tenant_id` (migration 028, NOT NULL after backfill) — every site belongs to exactly one tenant
 - `packages` - BOQ packages per site (has `billing_type`: 'standard' | 'supply_installation')
 - `boq_headlines` - BOQ section headers
 - `boq_line_items` - BOQ line items
 - `materials` - Materials per line item
+
+### Compliance Tables (migration 029)
+- `material_compliance_documents` - master compliance docs per material
+  - Unique on `(material_id, doc_type)` where `doc_type ∈ ('test_certificate', 'tds')`
+  - `status`: `'pending' | 'uploaded' | 'not_applicable'` (CHECK constrained)
+  - `file_path`, `file_name`, `uploaded_at`, `uploaded_by`
+  - Trigger `trg_material_compliance_updated_at` bumps `updated_at` on every UPDATE
+
+### BOQ Item Compliance Tables (migrations 030–033)
+Per-BOQ-line-item workflow (module §2c). Reached via `boq_line_items` (no `tenant_id` — tenancy flows through `packages.site_id → sites.tenant_id`). Permissive RLS + `update_updated_at_column()` triggers.
+- `boqc_materials` - approved/identified materials per line item
+  - `boq_line_item_id` (FK), `material_id` (nullable FK — null = free-text), denormalized `material_name`/`unit`, `estimated_quantity`
+  - `source`: `'ai' | 'manual' | 'ai_edited' | 'grn'` (migration 033 added `'grn'`), `is_approved`, `shared_with_vendor_at`
+  - **UNIQUE (boq_line_item_id, material_id)** — the conflict key for the idempotent GRN auto-add
+- `boqc_documents` - TDS + Test Cert per `boqc_materials` row (mirrors `material_compliance_documents`; UNIQUE (boqc_material_id, doc_type)); files at `boq-item-compliance/{boqc_material_id}/{doc_type}_{ts}.{ext}`
+- `boqc_ra_entries` - RA billing per line item: `ra_number`, `new_quantity` (only user-entered), server-recomputed `previous_quantity`/`upto_date_quantity`, `mb_sheet_file_path`; UNIQUE (boq_line_item_id, ra_number)
 
 ### GRN Tables (Invoice-based)
 - `grn_invoices` - GRN invoice headers
@@ -252,6 +364,7 @@ Reports module with expandable submenu:
 - `grn_line_items` - Materials per invoice
   - material_id, material_name, quantity, unit, rate, gst_rate
   - amount_without_gst, amount_with_gst (stored values, not computed)
+  - `boq_line_item_id` (migration 031, nullable FK to `boq_line_items`, `ON DELETE SET NULL`) — optional link; drives the BOQ Item Compliance auto-add + the BOQ Item column on MIR reports
   - Note: Amounts are stored directly from Excel to preserve discounts
 - `grn_invoice_dc` - Delivery challan documents (invoice-level)
 - `grn_line_item_documents` - Test Cert, TDS per material (MIR removed from UI)
@@ -422,6 +535,35 @@ const { data } = await supabase.storage
 window.open(data.signedUrl, '_blank')
 ```
 
+### Tenant-scoping a Supabase query
+```typescript
+import { getSession, isSuperuser } from '@/lib/auth'
+
+const session = getSession()
+let query = supabase.from('sites').select('*').order('created_at', { ascending: false })
+
+// Non-superuser tenants see only their own sites.
+// `master_materials`, `material_compliance_documents` etc. are NOT tenant-scoped today —
+// don't add tenant filters to them; users expect to see the shared list.
+if (session && !isSuperuser(session)) {
+  query = query.eq('tenant_id', session.tenant_id)
+}
+const { data, error } = await query
+```
+
+### Effective compliance status (library + per-line-item)
+```typescript
+import { effectiveDocStatus, docStatusYN, fetchMaterialComplianceMap } from '@/lib/material-compliance'
+
+// Fetch once for a list of line items
+const map = await fetchMaterialComplianceMap(materialIds)
+
+// Per-doc derivation — use this everywhere you display or export a Test Cert / TDS status
+const libSlot = map.get(li.material_id)?.[doc.document_type as 'test_certificate' | 'tds']
+const effective = effectiveDocStatus(doc, libSlot) // 'uploaded' | 'na' | 'pending'
+const yn = docStatusYN(effective)                  // 'Y' | 'N' | 'NA'
+```
+
 ### Excel Export
 ```typescript
 import * as XLSX from 'xlsx'
@@ -489,8 +631,10 @@ Navigation items are defined in:
 - `src/components/layout/sidebar.tsx` - Desktop sidebar
 - `src/components/layout/mobile-nav.tsx` - Mobile navigation
 
-Main navigation items:
-- Dashboard, Sites, BOQ Management, BOQ Progress, RA Billing, Workstations, Material GRN, Inventory, Expenses Recording, Expense Dashboard, Supplier Invoices, Checklists
+Both filter by `session.allowed_modules` (or pass-through for `superuser`) so users only see items they can actually open.
+
+Main navigation items (in order):
+- Home (`/` — module landing), Dashboard, Sites, BOQ Management, BOQ Progress, **BOQ Item Compliance**, **BOQ Item Overview**, RA Billing, Workstations, Material GRN, **Documents Compliance**, Inventory, Expenses Recording, Expense Dashboard, Supplier Invoices, Checklists
 
 Reports submenu items (expandable group):
 - Overview, MIR Reports
@@ -498,15 +642,23 @@ Reports submenu items (expandable group):
 Master Data submenu items (expandable group):
 - Workstations, Material List, Equipment Types, Equipment Rates, Labour Contractors, Manpower Categories, Manpower Rates, Suppliers
 
+Admin section (gated by role, shown at the bottom of the sidebar):
+- Manage Users (admin or superuser), Activation Codes (superuser only), Tenants (superuser only)
+
 To add a new page:
-1. Create page in `src/app/[page-name]/page.tsx`
-2. Add navigation item to both sidebar.tsx and mobile-nav.tsx
-3. Import required icon from lucide-react
+1. Create page in `src/app/[page-name]/page.tsx`. The page renders inside `AuthGate` automatically via the root layout — no need to add an auth check.
+2. Add a `ModuleKey` value + a `MODULES` entry + group membership in `src/lib/modules.ts`. The landing page, sidebar, mobile-nav, and `AuthGate` all consume this list. If the page is under `/admin/*` and role-gated, set `requires: 'admin' | 'superuser'`.
+3. Add navigation entries to both `sidebar.tsx` and `mobile-nav.tsx` (matching `moduleKey`).
+4. Add the new path to `moduleKeyForPath()` in `modules.ts` so `AuthGate` can resolve route → module.
+5. Import required icon from lucide-react.
 
 ## Environment Variables
 ```
 NEXT_PUBLIC_SUPABASE_URL=https://xxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=xxx
+# Server-side only (NOT NEXT_PUBLIC). Powers the AI material recommendation route.
+# Also add it to the Netlify environment (build + functions). Absent → keyword-match fallback.
+ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 ## Running Migrations
@@ -525,10 +677,22 @@ Key migrations:
 - `023_equipment_rates.sql` - Equipment rates table (supplier + equipment + rate), add supplier columns to expense_equipment
 - `024_ra_billing_columns.sql` - Add 7 RA Billing columns to boq_line_items (rate, total_amount, gst_amount, total_amount_with_gst, actual_quantity, actual_amount, actual_amount_with_gst)
 - `025_supply_installation_support.sql` - Add `billing_type` to packages, add 8 S&I columns to boq_line_items (qty_ext, supply_rate, installation_rate, supply_amount, installation_amount, actual_supply_amount, actual_installation_amount, actual_total_amount)
+- `028_multi_tenant.sql` - Multi-tenancy: tenants, tenant_users (bcrypt), site_activation_codes, sites.tenant_id (backfilled to Cogneta). Seeds `Cogneta/Cogneta` (superuser) + `EFC/admin` (admin). Bcrypt hashes generated by `scripts/hash-seed-passwords.js` and inlined in the migration.
+- `029_material_compliance.sql` - `material_compliance_documents` table + `updated_at` trigger; underpins the Documents Compliance module + the two-way sync with Material GRN.
+- `030_boq_item_workflow.sql` - `boqc_materials` / `boqc_documents` / `boqc_ra_entries` (BOQ Item Compliance/Overview, module §2c) with permissive RLS + `updated_at` triggers.
+- `031_grn_boq_line_item_link.sql` - add `grn_line_items.boq_line_item_id` (nullable FK, `ON DELETE SET NULL`) + index.
+- `032_grant_boq_item_modules.sql` - grant `boq-item-compliance` + `boq-item-overview` to any `tenant_users` row that already has `boq` (superusers auto-see all).
+- `033_boqc_source_grn.sql` - extend `boqc_materials.source` CHECK to allow `'grn'` (GRN auto-add provenance).
 
 ## Import/Utility Scripts
 
-Located in `app/` directory for data import operations:
+Two categories — one-off data imports live at `app/*.js`, the newer auth/data-update helpers live at `app/scripts/*.js`.
+
+### `scripts/hash-seed-passwords.js`
+Generates the bcrypt hashes used by migration 028's seed `INSERT INTO tenant_users`. Run once before applying the migration in Supabase SQL Editor; paste the printed `INSERT` block into the migration where indicated (already done for the shipped pilot — the hashes are inlined).
+
+### `scripts/update-cogneta-name.js`
+Template for **one-shot data updates** (non-DDL) via the anon key. Hand-parses `.env.local`, creates a Supabase client, runs a single UPDATE. Works because RLS is permissive — see the auth caveat. Copy this script and edit the query when you need to flip values in production data without asking the user to paste SQL. Don't use for schema changes (DDL still goes via Supabase SQL Editor).
 
 ### `import-data.js`
 Import materials and suppliers from Excel to master data.
