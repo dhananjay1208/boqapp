@@ -696,7 +696,7 @@ export default function BOQItemCompliancePage() {
                                 />
                               </TableCell>
                               <TableCell>
-                                <Badge variant="secondary" className="text-xs bg-slate-100 text-slate-600">{m.source === 'ai' ? 'AI' : m.source === 'ai_edited' ? 'AI•edited' : 'Manual'}</Badge>
+                                <Badge variant="secondary" className="text-xs bg-slate-100 text-slate-600">{m.source === 'ai' ? 'AI' : m.source === 'ai_edited' ? 'AI•edited' : m.source === 'grn' ? 'GRN' : 'Manual'}</Badge>
                               </TableCell>
                               <TableCell className="text-center">
                                 <Checkbox checked={m.is_approved} onCheckedChange={() => toggleApproved(m)} />

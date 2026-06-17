@@ -88,6 +88,7 @@ import {
   type DocType as ComplianceDocType,
   type LibraryRow as ComplianceLibraryRow,
 } from '@/lib/material-compliance'
+import { ensureBoqcMaterialFromGrn } from '@/lib/boq-item-workflow'
 
 interface Site {
   id: string
@@ -786,6 +787,16 @@ export default function MaterialGRNPage() {
           }))
 
           await supabase.from('grn_line_item_documents').insert(docs)
+
+          // Reflect this received material under BOQ Item Compliance for the linked line item
+          if (item.boq_line_item_id) {
+            await ensureBoqcMaterialFromGrn({
+              boq_line_item_id: item.boq_line_item_id,
+              material_id: item.material_id,
+              material_name: item.material_name,
+              unit: item.unit || null,
+            })
+          }
         }
 
         toast.success('Invoice updated successfully')
@@ -851,6 +862,16 @@ export default function MaterialGRNPage() {
           }))
 
           await supabase.from('grn_line_item_documents').insert(docs)
+
+          // Reflect this received material under BOQ Item Compliance for the linked line item
+          if (item.boq_line_item_id) {
+            await ensureBoqcMaterialFromGrn({
+              boq_line_item_id: item.boq_line_item_id,
+              material_id: item.material_id,
+              material_name: item.material_name,
+              unit: item.unit || null,
+            })
+          }
         }
 
         toast.success(isPartialDelivery ? 'GRN entry added (partial delivery)' : 'GRN entry created successfully')
@@ -1557,13 +1578,27 @@ export default function MaterialGRNPage() {
   }
 
   // Export MIR Overview function
-  function exportMIROverview() {
+  async function exportMIROverview() {
     if (invoiceList.length === 0) {
       toast.error('No invoice data to export')
       return
     }
 
     const siteName = sites.find(s => s.id === selectedSiteId)?.name || 'Unknown Site'
+
+    // Map linked BOQ line item UUIDs -> human-readable item numbers (e.g. "1.01").
+    const boqIds = [...new Set(
+      invoiceList.flatMap(inv => inv.line_items.map(li => li.boq_line_item_id).filter(Boolean))
+    )] as string[]
+    const boqItemMap = new Map<string, string>()
+    if (boqIds.length > 0) {
+      try {
+        const { data } = await supabase.from('boq_line_items').select('id, item_number').in('id', boqIds)
+        for (const r of (data || []) as { id: string; item_number: string }[]) boqItemMap.set(r.id, r.item_number)
+      } catch (err) {
+        console.error('Failed to load BOQ item numbers for MIR Overview:', err)
+      }
+    }
 
     // Collect all unique GRN dates and sort them
     const uniqueDates = [...new Set(invoiceList.map(inv => inv.grn_date))].sort().reverse()
@@ -1578,7 +1613,7 @@ export default function MaterialGRNPage() {
       return `${d.getDate().toString().padStart(2, '0')}-${months[d.getMonth()]}-${d.getFullYear()}`
     })
 
-    const totalCols = 5 + uniqueDates.length + 3 // fixed + dates + compliance
+    const totalCols = 6 + uniqueDates.length + 3 // fixed (incl. BOQ Item) + dates + compliance
 
     // Build the worksheet data as array of arrays
     const wsData: any[][] = []
@@ -1594,14 +1629,14 @@ export default function MaterialGRNPage() {
     for (let i = 1; i < totalCols; i++) siteInfoRow.push('')
     wsData.push(siteInfoRow)
 
-    // Row 2: MIR references (blank for first 5 columns, then MIR 1, MIR 2, etc., then blank for compliance)
-    const row2 = ['', '', '', '', '']
+    // Row 2: MIR references (blank for first 6 columns, then MIR 1, MIR 2, etc., then blank for compliance)
+    const row2 = ['', '', '', '', '', '']
     mirReferences.forEach(mir => row2.push(mir))
     row2.push('', '', '') // DC, Test Cert, TDS columns
     wsData.push(row2)
 
     // Row 3: Column Headers
-    const row3 = ['Invoice no.', 'Date', 'Description', 'Qty', 'Unit']
+    const row3 = ['Invoice no.', 'Date', 'Description', 'Qty', 'Unit', 'BOQ Item']
     formattedDates.forEach(date => row3.push(date))
     row3.push('DC', 'TEST CERTIFICATE', 'TDS')
     wsData.push(row3)
@@ -1609,7 +1644,7 @@ export default function MaterialGRNPage() {
     // Create a map of date to column index
     const dateColumnMap = new Map<string, number>()
     uniqueDates.forEach((date, idx) => {
-      dateColumnMap.set(date, 5 + idx)
+      dateColumnMap.set(date, 6 + idx)
     })
 
     // Track invoice boundaries for grouping borders
@@ -1641,6 +1676,9 @@ export default function MaterialGRNPage() {
 
         // Unit
         row.push(lineItem.unit)
+
+        // BOQ Item (linked BOQ line item number, blank if unlinked)
+        row.push(lineItem.boq_line_item_id ? (boqItemMap.get(lineItem.boq_line_item_id) || '') : '')
 
         // Quantity columns for each date (filled only for the matching GRN date)
         uniqueDates.forEach(date => {
@@ -1724,7 +1762,7 @@ export default function MaterialGRNPage() {
           }
         } else if (r === 3) {
           // Row 3: Column headers
-          const isDateCol = c >= 5 && c < 5 + uniqueDates.length
+          const isDateCol = c >= 6 && c < 6 + uniqueDates.length
           ws[ref].s = {
             font: { bold: true, sz: 10, color: { rgb: 'FFFFFF' } },
             fill: { patternType: 'solid', fgColor: { rgb: isDateCol ? '475569' : '334155' } },
@@ -1734,7 +1772,7 @@ export default function MaterialGRNPage() {
         } else {
           // Data rows (r >= 4)
           const isEvenRow = (r - 4) % 2 === 0
-          const isComplianceCol = c >= 5 + uniqueDates.length
+          const isComplianceCol = c >= 6 + uniqueDates.length
           const cellValue = ws[ref].v
 
           // Base style for data cells
@@ -1789,6 +1827,7 @@ export default function MaterialGRNPage() {
       { wch: 38 },  // Description
       { wch: 10 },  // Qty
       { wch: 10 },  // Unit
+      { wch: 12 },  // BOQ Item
     ]
     uniqueDates.forEach(() => colWidths.push({ wch: 14 }))
     colWidths.push({ wch: 8 })   // DC
