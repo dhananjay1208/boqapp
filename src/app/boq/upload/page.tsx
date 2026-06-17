@@ -32,7 +32,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
-import { parseBOQExcel, ParsedBOQ, ParsedHeadline } from '@/lib/excel-parser'
+import { parseBOQExcel, ParsedBOQ } from '@/lib/excel-parser'
 import { toast } from 'sonner'
 
 interface Site {
@@ -61,6 +61,8 @@ function BOQUploadContent() {
   const [parsedData, setParsedData] = useState<ParsedBOQ[] | null>(null)
   const [parseError, setParseError] = useState<string | null>(null)
   const [warnings, setWarnings] = useState<string[]>([])
+  // Which detected BOQ sheet to import (default first — the primary BOQ sheet).
+  const [selectedSheetIndex, setSelectedSheetIndex] = useState(0)
 
   const [saving, setSaving] = useState(false)
   const [dragActive, setDragActive] = useState(false)
@@ -143,6 +145,7 @@ function BOQUploadContent() {
 
       if (result.success && result.data) {
         setParsedData(result.data)
+        setSelectedSheetIndex(0)
         setWarnings(result.warnings || [])
         toast.success(`Parsed ${result.data.reduce((sum, d) => sum + d.headlines.length, 0)} BOQ headlines`)
       } else {
@@ -164,7 +167,7 @@ function BOQUploadContent() {
       return
     }
 
-    if (!parsedData || parsedData.length === 0) {
+    if (!selectedSheet || selectedSheet.headlines.length === 0) {
       toast.error('No data to save')
       return
     }
@@ -178,8 +181,8 @@ function BOQUploadContent() {
         .update({ billing_type: billingType })
         .eq('id', selectedPackage)
 
-      // Flatten all headlines from all parsed sheets
-      const allHeadlines = parsedData.flatMap(d => d.headlines)
+      // Import only the selected BOQ sheet into the chosen package
+      const allHeadlines = selectedSheet.headlines
 
       for (const headline of allHeadlines) {
         // Insert headline
@@ -258,13 +261,15 @@ function BOQUploadContent() {
     ? packages.filter(p => p.site_id === selectedSite)
     : packages
 
-  const totalHeadlines = parsedData?.reduce((sum, d) => sum + d.headlines.length, 0) || 0
-  const totalLineItems = parsedData?.reduce(
-    (sum, d) => sum + d.headlines.reduce((s, h) => s + h.lineItems.length, 0),
-    0
-  ) || 0
-  const hasRaBillingData = parsedData?.some(d => d.hasRaBillingData) || false
-  const billingType = parsedData?.[0]?.billingType || 'standard'
+  // Only the selected sheet is imported (each workbook's primary BOQ is sheet 1;
+  // supplementary sheets like OEM-Supply are detected but not imported by default).
+  const selectedSheet = parsedData && parsedData.length > 0
+    ? parsedData[Math.min(selectedSheetIndex, parsedData.length - 1)]
+    : null
+  const totalHeadlines = selectedSheet?.headlines.length || 0
+  const totalLineItems = selectedSheet?.headlines.reduce((s, h) => s + h.lineItems.length, 0) || 0
+  const hasRaBillingData = selectedSheet?.hasRaBillingData || false
+  const billingType = selectedSheet?.billingType || 'standard'
   const isSupplyInstallation = billingType === 'supply_installation'
 
   return (
@@ -421,6 +426,42 @@ function BOQUploadContent() {
               </CardContent>
             </Card>
 
+            {/* BOQ Sheet selector */}
+            {parsedData && parsedData.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>BOQ Sheet</CardTitle>
+                  <CardDescription>
+                    {parsedData.length > 1
+                      ? `${parsedData.length} BOQ-like sheets detected — choose which one to import`
+                      : 'Detected BOQ sheet to import'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {parsedData.length > 1 ? (
+                    <Select value={String(selectedSheetIndex)} onValueChange={(v) => setSelectedSheetIndex(Number(v))}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {parsedData.map((s, idx) => (
+                          <SelectItem key={idx} value={String(idx)}>
+                            {s.sheetName} ({s.headlines.reduce((a, h) => a + h.lineItems.length, 0)} items
+                            {s.billingType === 'supply_installation' ? ', S&I' : ''})
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <p className="text-sm text-slate-600">
+                      {parsedData[0].sheetName}
+                      <span className="text-slate-400"> ({totalLineItems} items)</span>
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
             {/* Save Button */}
             {parsedData && (
               <Button
@@ -461,7 +502,7 @@ function BOQUploadContent() {
                   </div>
                 ) : (
                   <div className="space-y-6">
-                    {parsedData.map((sheet, sheetIndex) => (
+                    {(selectedSheet ? [selectedSheet] : []).map((sheet, sheetIndex) => (
                       <div key={sheetIndex}>
                         <h3 className="font-medium text-lg mb-3 flex items-center gap-2">
                           <Badge variant="outline">{sheet.packageName}</Badge>

@@ -32,6 +32,7 @@ export interface ParsedHeadline {
 
 export interface ParsedBOQ {
   packageName: string
+  sheetName: string
   headlines: ParsedHeadline[]
   hasRaBillingData: boolean
   billingType: 'standard' | 'supply_installation'
@@ -42,13 +43,6 @@ export interface ParseResult {
   data?: ParsedBOQ[]
   error?: string
   warnings?: string[]
-}
-
-/**
- * Check if a number is a whole number (integer)
- */
-function isWholeNumber(value: number): boolean {
-  return Number.isInteger(value)
 }
 
 /**
@@ -66,6 +60,46 @@ function parseNumericCell(value: any): number | null {
 function isTotalRow(description: string): boolean {
   const lower = description.toLowerCase().trim()
   return lower.includes('total') || lower.includes('sub total') || lower.includes('grand total') || lower.includes('subtotal')
+}
+
+/** Lowercased, trimmed header text. */
+function normHeader(value: unknown): string {
+  return String(value ?? '').toLowerCase().trim()
+}
+
+/**
+ * Detect an S.No-type header cell. Collapses spaces/dots so "SR. NO.", "S.No",
+ * "SL. NO." all match.
+ */
+function isSerialHeaderCell(value: unknown): boolean {
+  const collapsed = normHeader(value).replace(/[\s.]/g, '')
+  return collapsed === 'sno' || collapsed === 'slno' || collapsed === 'srno' || collapsed === 'serialno'
+}
+
+/**
+ * Clean a numeric S.No: rounds away float noise (2.0199999999999996 -> 2.02).
+ * Used for both whole/decimal classification and the item_number string.
+ */
+function cleanSerial(n: number): number {
+  return Math.round(n * 100) / 100
+}
+
+/**
+ * Compose a line-item description from the item-name, specification/product-description
+ * and make/model columns. Falls back gracefully to whichever columns exist.
+ */
+function composeDescription(row: unknown[], itemCol: number, specCol: number, makeCol: number): string {
+  const item = itemCol >= 0 ? String(row[itemCol] ?? '').trim() : ''
+  const spec = specCol >= 0 ? String(row[specCol] ?? '').trim() : ''
+  let desc: string
+  if (item && spec) {
+    desc = spec.toLowerCase().includes(item.toLowerCase()) ? spec : `${item} — ${spec}`
+  } else {
+    desc = item || spec
+  }
+  const make = makeCol >= 0 ? String(row[makeCol] ?? '').trim() : ''
+  if (make) desc = desc ? `${desc} (Make: ${make})` : `Make: ${make}`
+  return desc
 }
 
 /**
@@ -102,9 +136,13 @@ export function parseBOQExcel(file: File): Promise<ParseResult> {
             continue
           }
 
-          const parsedSheet = parseSheet(jsonData, sheetName, warnings)
+          const parsedSheet = parseBOQRows(jsonData, sheetName, warnings)
           if (parsedSheet) {
+            // Only the main BOQ tab (the first BOQ-signature sheet, e.g. CIVIL /
+            // Toilet BOQ / Sanitary Fitting). Supplementary tabs (OEM-Supply,
+            // Make List, etc.) are intentionally ignored.
             results.push(parsedSheet)
+            break
           }
         }
 
@@ -142,7 +180,7 @@ export function parseBOQExcel(file: File): Promise<ParseResult> {
   })
 }
 
-function parseSheet(rows: any[][], sheetName: string, warnings: string[]): ParsedBOQ | null {
+export function parseBOQRows(rows: any[][], sheetName: string, warnings: string[]): ParsedBOQ | null {
   // Get package name from sheet name or first/second row
   let packageName = sheetName
 
@@ -151,7 +189,7 @@ function parseSheet(rows: any[][], sheetName: string, warnings: string[]): Parse
     if (rows[i] && rows[i][0] && typeof rows[i][0] === 'string') {
       const cellValue = String(rows[i][0]).trim()
       // Use non-header rows as package name
-      if (!cellValue.toLowerCase().includes('s.no') && !cellValue.toLowerCase().includes('sl.no') && cellValue.length > 0) {
+      if (!isSerialHeaderCell(cellValue) && cellValue.length > 0) {
         packageName = cellValue
         break
       }
@@ -159,7 +197,7 @@ function parseSheet(rows: any[][], sheetName: string, warnings: string[]): Parse
     // Also check column B for package name (offset templates)
     if (rows[i] && rows[i][1] && typeof rows[i][1] === 'string') {
       const cellValue = String(rows[i][1]).trim()
-      if (!cellValue.toLowerCase().includes('s.no') && !cellValue.toLowerCase().includes('sl.no') && !cellValue.toLowerCase().includes('description') && cellValue.length > 0) {
+      if (!isSerialHeaderCell(cellValue) && !cellValue.toLowerCase().includes('description') && cellValue.length > 0) {
         if (packageName === sheetName) {
           packageName = cellValue
         }
@@ -167,15 +205,15 @@ function parseSheet(rows: any[][], sheetName: string, warnings: string[]): Parse
     }
   }
 
-  // Find header row (contains "S.No" or "SL.NO") — scan cells 0-4 across first 10 rows
+  // Find header row (contains an S.No-type column: "S.No" / "SL.NO" / "SR. NO." …)
+  // — scan cells 0-6 across the first 12 rows
   let headerRowIndex = -1
   let columnOffset = 0
-  for (let i = 0; i < Math.min(10, rows.length); i++) {
+  for (let i = 0; i < Math.min(12, rows.length); i++) {
     const row = rows[i]
-    if (!row || row.length < 4) continue
-    for (let col = 0; col <= Math.min(4, row.length - 1); col++) {
-      const cellVal = String(row[col] || '').toLowerCase().trim()
-      if (cellVal.includes('s.no') || cellVal.includes('sl.no') || cellVal === 'sno') {
+    if (!row || row.length < 3) continue
+    for (let col = 0; col <= Math.min(6, row.length - 1); col++) {
+      if (isSerialHeaderCell(row[col])) {
         headerRowIndex = i
         columnOffset = col
         break
@@ -205,10 +243,8 @@ function parseSheet(rows: any[][], sheetName: string, warnings: string[]): Parse
   let actualAmountCol = 10
   let actualAmountWithGstCol = 11
 
-  // S&I column indices
-  let unitCol = -1
+  // S&I billing column indices
   let qtyExtCol = -1
-  let quantityCol = -1
   let supplyRateCol = -1
   let installationRateCol = -1
   let supplyAmountCol = -1
@@ -217,6 +253,14 @@ function parseSheet(rows: any[][], sheetName: string, warnings: string[]): Parse
   let actualSupplyAmountCol = -1
   let actualInstallationAmountCol = -1
   let actualTotalAmountCol = -1
+
+  // Unified structural columns (resolved by header keyword, with legacy fallback)
+  let itemCol = -1
+  let specCol = -1
+  let locationCol = -1
+  let unitCol = -1
+  let qtyCol = -1
+  let makeModelCol = -1
 
   // Build a combined header map from header row and potentially the row below (for multi-row headers)
   const headerMap: Map<number, string> = new Map()
@@ -254,6 +298,30 @@ function parseSheet(rows: any[][], sheetName: string, warnings: string[]): Parse
     }
   }
 
+  // ---- BOQ-sheet signature: must have an item/description column AND a qty column.
+  // Filters supplementary sheets (Make List, Supply, Exclusions, …) structurally.
+  let hasItemDesc = false
+  let hasQtyHeader = false
+  headerMap.forEach((h) => {
+    if (h.includes('item') || h.includes('description') || h.includes('specification')) hasItemDesc = true
+    if (h.includes('qty') || h.includes('quantity')) hasQtyHeader = true
+  })
+  if (!hasItemDesc || !hasQtyHeader) {
+    warnings.push(`Sheet "${sheetName}" doesn't look like a BOQ (no item/qty columns) — skipped`)
+    return null
+  }
+
+  // ---- Unified structural column resolution (by keyword). Skips the S.No column.
+  headerMap.forEach((headerText, col) => {
+    if (col === columnOffset) return
+    if (itemCol === -1 && headerText.includes('item')) itemCol = col
+    else if (specCol === -1 && (headerText.includes('specification') || headerText.includes('description'))) specCol = col
+    if (locationCol === -1 && headerText.includes('location')) locationCol = col
+    if (unitCol === -1 && headerText.includes('unit') && !headerText.includes('qty')) unitCol = col
+    if (qtyCol === -1 && (headerText.includes('qty') || headerText.includes('quantity')) && !headerText.includes('ext') && !headerText.includes('actual')) qtyCol = col
+    if (makeModelCol === -1 && (headerText.includes('make') || headerText.includes('model'))) makeModelCol = col
+  })
+
   // Detect S&I template: look for "supply" + "rate" AND "installation" + "rate" in headers
   let hasSupplyRate = false
   let hasInstallationRate = false
@@ -266,19 +334,11 @@ function parseSheet(rows: any[][], sheetName: string, warnings: string[]): Parse
   if (isSupplyInstallation) {
     console.log('[Excel Parser] Detected Supply & Installation template')
 
-    // Dynamic column mapping for S&I
+    // Dynamic column mapping for S&I billing columns
     headerMap.forEach((headerText, col) => {
-      // Unit column (contains "unit" but not "qty")
-      if (headerText.includes('unit') && !headerText.includes('qty')) {
-        unitCol = col
-      }
       // Qty Ext
       if (headerText.includes('qty') && headerText.includes('ext')) {
         qtyExtCol = col
-      }
-      // Quantity (standalone — not "actual quantity", not "qty ext")
-      if ((headerText === 'quantity' || headerText === 'qty') && !headerText.includes('actual') && !headerText.includes('ext')) {
-        quantityCol = col
       }
       // Supply Rate (not "amount")
       if (headerText.includes('supply') && headerText.includes('rate') && !headerText.includes('amount')) {
@@ -314,16 +374,10 @@ function parseSheet(rows: any[][], sheetName: string, warnings: string[]): Parse
       }
     })
 
-    // Fallback: if actual total amount column header is missing (e.g., null in plumbing),
-    // assume it's the column right after actual installation amount
-    if (actualTotalAmountCol === -1 && actualInstallationAmountCol >= 0) {
-      actualTotalAmountCol = actualInstallationAmountCol + 1
-    }
-
     console.log('[Excel Parser] S&I Column mapping:', {
-      unitCol, qtyExtCol, quantityCol, supplyRateCol, installationRateCol,
+      itemCol, specCol, unitCol, qtyExtCol, qtyCol, supplyRateCol, installationRateCol,
       supplyAmountCol, installationAmountCol, siActualQuantityCol,
-      actualSupplyAmountCol, actualInstallationAmountCol, actualTotalAmountCol
+      actualSupplyAmountCol, actualInstallationAmountCol, actualTotalAmountCol, makeModelCol
     })
   } else {
     // Standard template — search for billing-related keywords in header cells (columns 4+)
@@ -353,6 +407,13 @@ function parseSheet(rows: any[][], sheetName: string, warnings: string[]): Parse
         rateCol = col
       }
     })
+
+    // Legacy fallback: when keyword detection missed a structural column, fall back to the
+    // original fixed layout (S.No, Description, Location, Unit, Quantity). Standard path only.
+    if (specCol === -1) specCol = columnOffset + 1
+    if (locationCol === -1) locationCol = columnOffset + 2
+    if (unitCol === -1) unitCol = columnOffset + 3
+    if (qtyCol === -1) qtyCol = columnOffset + 4
 
     // Fallback: if headers didn't match but data rows have numeric values in columns 5+
     if (!isExtendedTemplate && headerRow.length >= 8) {
@@ -394,6 +455,7 @@ function parseSheet(rows: any[][], sheetName: string, warnings: string[]): Parse
   const headerMapObj: Record<number, string> = {}
   headerMap.forEach((v, k) => { headerMapObj[k] = v })
   console.log('[Excel Parser] Header map:', headerMapObj)
+  console.log('[Excel Parser] Structural cols:', { columnOffset, itemCol, specCol, locationCol, unitCol, qtyCol, makeModelCol })
   console.log('[Excel Parser] isExtendedTemplate:', isExtendedTemplate, 'isSupplyInstallation:', isSupplyInstallation)
   console.log('[Excel Parser] dataStartIndex:', dataStartIndex)
 
@@ -408,30 +470,12 @@ function parseSheet(rows: any[][], sheetName: string, warnings: string[]): Parse
     const row = rows[i]
     if (!row || row.length < 2) continue
 
-    // Base column mapping depends on template type
-    let sNo: any
-    let description: string
-    let location: string
-    let unit: string
-    let quantity: number
-
-    if (isSupplyInstallation) {
-      // S&I: sNo and description at offset+0, offset+1; no location column
-      sNo = row[columnOffset]
-      description = row[columnOffset + 1] ? String(row[columnOffset + 1]).trim() : ''
-      location = '' // S&I templates have no location column
-      unit = unitCol >= 0 ? (row[unitCol] ? String(row[unitCol]).trim() : '') : ''
-      quantity = quantityCol >= 0
-        ? (typeof row[quantityCol] === 'number' ? row[quantityCol] : parseFloat(String(row[quantityCol] || '0')) || 0)
-        : 0
-    } else {
-      // Standard: 0: S.No, 1: Description, 2: LOCATION, 3: Unit, 4: Quantity
-      sNo = row[0]
-      description = row[1] ? String(row[1]).trim() : ''
-      location = row[2] ? String(row[2]).trim() : ''
-      unit = row[3] ? String(row[3]).trim() : ''
-      quantity = typeof row[4] === 'number' ? row[4] : parseFloat(String(row[4] || '0')) || 0
-    }
+    // Unified structural mapping (keyword-resolved columns; same for standard + S&I).
+    const sNo: any = row[columnOffset]
+    const description = composeDescription(row, itemCol, specCol, makeModelCol)
+    const location = locationCol >= 0 ? String(row[locationCol] ?? '').trim() : ''
+    const unit = unitCol >= 0 ? String(row[unitCol] ?? '').trim() : ''
+    const quantity = qtyCol >= 0 ? (parseNumericCell(row[qtyCol]) ?? 0) : 0
 
     // Parse billing columns based on template type
     let rate: number | null = null
@@ -497,6 +541,21 @@ function parseSheet(rows: any[][], sheetName: string, warnings: string[]): Parse
       : {}
 
     const billingFields = { ...standardExtendedFields, ...siFields }
+
+    // Does this row carry real measurable data? Used to tell a section-label headline
+    // (whole-number S.No, no data) apart from a flat-list line item (whole-number S.No
+    // that carries qty/rate/amount, e.g. the Sanitary Fitting template).
+    const hasMeasurableData =
+      unit.length > 0 ||
+      quantity > 0 ||
+      (qtyExt != null && qtyExt.length > 0) ||
+      (rate != null && rate !== 0) ||
+      (totalAmount != null && totalAmount !== 0) ||
+      (supplyRate != null && supplyRate !== 0) ||
+      (supplyAmount != null && supplyAmount !== 0) ||
+      (installationRate != null && installationRate !== 0) ||
+      (installationAmount != null && installationAmount !== 0) ||
+      (actualTotalAmount != null && actualTotalAmount !== 0)
 
     // Handle rows with no S.No
     if (sNo === undefined || sNo === null || sNo === '') {
@@ -595,32 +654,44 @@ function parseSheet(rows: any[][], sheetName: string, warnings: string[]): Parse
         currentOrphanSection = null
       }
 
-      if (isWholeNumber(sNoNum)) {
-        if (currentHeadline) {
-          headlines.push(currentHeadline)
-        }
+      // Clean float noise: 2.0199999999999996 -> 2.02. Used for classification + item_number.
+      const cleaned = cleanSerial(sNoNum)
+      const itemNumberStr = String(cleaned)
 
-        currentHeadline = {
-          serialNumber: sNoNum,
-          name: description || `Item ${sNoNum}`,
-          lineItems: [],
-        }
-
-        // If row has unit data, it's an item — also create a line item
-        if (unit.length > 0) {
+      if (Number.isInteger(cleaned)) {
+        if (hasMeasurableData) {
+          // Flat-list line item: whole-number S.No that carries data (no headline hierarchy,
+          // e.g. Sanitary Fitting). Collect under a single synthetic headline.
+          if (!currentHeadline) {
+            currentHeadline = {
+              serialNumber: 1,
+              name: packageName || sheetName || 'Items',
+              lineItems: [],
+            }
+          }
           currentHeadline.lineItems.push({
-            itemNumber: sNoNum.toString(),
+            itemNumber: itemNumberStr,
             description: description || '',
             location: location || '',
             unit: unit || '',
             quantity: quantity,
             ...billingFields,
           })
+        } else {
+          // Section headline (whole-number S.No, no measurable data).
+          if (currentHeadline) {
+            headlines.push(currentHeadline)
+          }
+          currentHeadline = {
+            serialNumber: cleaned,
+            name: description || `Item ${cleaned}`,
+            lineItems: [],
+          }
         }
       } else {
-        // Decimal line item (1.1, 1.2, etc.)
+        // Decimal line item (1.01, 1.02, etc.)
         const lineItem: ParsedLineItem = {
-          itemNumber: sNoNum.toString(),
+          itemNumber: itemNumberStr,
           description: description || '',
           location: location || '',
           unit: unit || '',
@@ -632,8 +703,8 @@ function parseSheet(rows: any[][], sheetName: string, warnings: string[]): Parse
           currentHeadline.lineItems.push(lineItem)
         } else {
           currentHeadline = {
-            serialNumber: Math.floor(sNoNum),
-            name: `Item ${Math.floor(sNoNum)}`,
+            serialNumber: Math.floor(cleaned),
+            name: `Item ${Math.floor(cleaned)}`,
             lineItems: [lineItem],
           }
         }
@@ -685,6 +756,7 @@ function parseSheet(rows: any[][], sheetName: string, warnings: string[]): Parse
 
   return {
     packageName,
+    sheetName,
     headlines,
     hasRaBillingData: isExtendedTemplate || isSupplyInstallation,
     billingType: isSupplyInstallation ? 'supply_installation' : 'standard',

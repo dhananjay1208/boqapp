@@ -17,6 +17,8 @@ import {
   KeyRound,
   Briefcase,
   ShieldCheck,
+  ClipboardList,
+  Gauge,
 } from 'lucide-react'
 
 export type ModuleKey =
@@ -24,6 +26,8 @@ export type ModuleKey =
   | 'sites'
   | 'boq'
   | 'boq-progress'
+  | 'boq-item-compliance'
+  | 'boq-item-overview'
   | 'ra-billing'
   | 'workstations'
   | 'material-grn'
@@ -63,6 +67,8 @@ export const MODULES: ModuleDef[] = [
   // Project Execution
   { key: 'boq', name: 'BOQ Management', description: 'Bill of Quantities & progress', href: '/boq', icon: FileSpreadsheet, tint: 'bg-blue-50 text-blue-600' },
   { key: 'boq-progress', name: 'BOQ Progress', description: 'Consolidated progress view', href: '/boq-progress', icon: TrendingUp, tint: 'bg-cyan-50 text-cyan-600' },
+  { key: 'boq-item-compliance', name: 'BOQ Item Compliance', description: 'Per-line-item materials, TDS, test certs & RA billing', href: '/boq-item-compliance', icon: ClipboardList, tint: 'bg-cyan-50 text-cyan-600' },
+  { key: 'boq-item-overview', name: 'BOQ Item Overview', description: 'Read-only per-line-item compliance & billing status', href: '/boq-item-overview', icon: Gauge, tint: 'bg-teal-50 text-teal-600' },
   { key: 'workstations', name: 'Workstations', description: 'Track work at physical locations', href: '/workstations', icon: Wrench, tint: 'bg-orange-50 text-orange-600' },
   { key: 'checklists', name: 'Checklists', description: 'Template library & PDF sign-offs', href: '/checklists', icon: ClipboardCheck, tint: 'bg-purple-50 text-purple-600' },
 
@@ -96,7 +102,7 @@ export const MODULE_GROUPS: ModuleGroup[] = [
   {
     name: 'Project Execution',
     pillColor: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-    moduleKeys: ['boq', 'boq-progress', 'workstations', 'checklists'],
+    moduleKeys: ['boq', 'boq-progress', 'boq-item-compliance', 'boq-item-overview', 'workstations', 'checklists'],
   },
   {
     name: 'Materials & Inventory',
@@ -127,6 +133,8 @@ export function moduleKeyForPath(pathname: string): ModuleKey | null {
   if (pathname.startsWith('/dashboard')) return 'dashboard'
   if (pathname.startsWith('/sites')) return 'sites'
   if (pathname.startsWith('/boq-progress')) return 'boq-progress'
+  if (pathname.startsWith('/boq-item-compliance')) return 'boq-item-compliance'
+  if (pathname.startsWith('/boq-item-overview')) return 'boq-item-overview'
   if (pathname.startsWith('/boq')) return 'boq'
   if (pathname.startsWith('/ra-billing')) return 'ra-billing'
   if (pathname.startsWith('/workstations')) return 'workstations'
