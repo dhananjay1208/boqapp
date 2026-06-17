@@ -141,6 +141,7 @@ interface GRNLineItem {
   amount_without_gst: number
   amount_with_gst: number
   notes: string | null
+  boq_line_item_id: string | null
   documents: LineItemDocument[]
 }
 
@@ -168,6 +169,7 @@ interface LineItemForm {
   rate: string
   gst_rate: string
   notes: string
+  boq_line_item_id: string
 }
 
 // Legacy interfaces for old GRN data
@@ -267,6 +269,10 @@ export default function MaterialGRNPage() {
   // Material search for line items
   const [materialSearchOpen, setMaterialSearchOpen] = useState<number | null>(null)
   const [materialSearchTerm, setMaterialSearchTerm] = useState('')
+
+  // BOQ line item link (optional) — searchable per line item, scoped to the selected site
+  const [boqLineItemOptions, setBoqLineItemOptions] = useState<{ id: string; label: string }[]>([])
+  const [boqPickerOpen, setBoqPickerOpen] = useState<number | null>(null)
 
   // Invoice form state
   const [invoiceForm, setInvoiceForm] = useState({
@@ -508,7 +514,44 @@ export default function MaterialGRNPage() {
     }
   }
 
+  // Load all BOQ line items for the selected site (flattened headline › item — description).
+  async function loadBoqLineItemOptions(siteId: string) {
+    if (!siteId) {
+      setBoqLineItemOptions([])
+      return
+    }
+    const { data: pkgs } = await supabase.from('packages').select('id').eq('site_id', siteId)
+    const pkgIds = (pkgs || []).map((p) => p.id)
+    if (pkgIds.length === 0) {
+      setBoqLineItemOptions([])
+      return
+    }
+    const { data: hls } = await supabase
+      .from('boq_headlines')
+      .select('id, serial_number, name, package_id')
+      .in('package_id', pkgIds)
+      .order('serial_number')
+    const hlIds = (hls || []).map((h) => h.id)
+    if (hlIds.length === 0) {
+      setBoqLineItemOptions([])
+      return
+    }
+    const hlMap = new Map((hls || []).map((h) => [h.id, `${h.serial_number}. ${h.name}`]))
+    const { data: items } = await supabase
+      .from('boq_line_items')
+      .select('id, item_number, description, headline_id')
+      .in('headline_id', hlIds)
+      .order('item_number')
+    setBoqLineItemOptions(
+      (items || []).map((it) => ({
+        id: it.id,
+        label: `${hlMap.get(it.headline_id) ?? ''} › ${it.item_number} — ${(it.description || '').slice(0, 50)}`,
+      }))
+    )
+  }
+
   function openCreateDialog() {
+    loadBoqLineItemOptions(selectedSiteId)
     setEditingInvoice(null)
     setInvoiceForm({
       supplier_id: '',
@@ -524,6 +567,7 @@ export default function MaterialGRNPage() {
   }
 
   function openEditDialog(invoice: GRNInvoice) {
+    loadBoqLineItemOptions(invoice.site_id || selectedSiteId)
     setEditingInvoice(invoice)
     setInvoiceForm({
       supplier_id: invoice.supplier_id,
@@ -543,6 +587,7 @@ export default function MaterialGRNPage() {
       rate: li.rate.toString(),
       gst_rate: li.gst_rate.toString(),
       notes: li.notes || '',
+      boq_line_item_id: li.boq_line_item_id || '',
     })))
     setInvoiceDialogOpen(true)
   }
@@ -557,6 +602,7 @@ export default function MaterialGRNPage() {
       rate: '',
       gst_rate: '18',
       notes: '',
+      boq_line_item_id: '',
     }
   }
 
@@ -724,6 +770,7 @@ export default function MaterialGRNPage() {
               amount_without_gst: amountExcl,
               amount_with_gst: amountIncl,
               notes: item.notes.trim() || null,
+              boq_line_item_id: item.boq_line_item_id || null,
             })
             .select()
             .single()
@@ -788,6 +835,7 @@ export default function MaterialGRNPage() {
               amount_without_gst: amountExcl,
               amount_with_gst: amountIncl,
               notes: item.notes.trim() || null,
+              boq_line_item_id: item.boq_line_item_id || null,
             })
             .select()
             .single()
@@ -2434,6 +2482,58 @@ export default function MaterialGRNPage() {
                                         <p className="text-sm">{material.name}</p>
                                         <p className="text-xs text-slate-500">{material.category} | {material.unit}</p>
                                       </div>
+                                    </CommandItem>
+                                  ))}
+                                </CommandGroup>
+                              </CommandList>
+                            </Command>
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+
+                      {/* BOQ Line Item link (optional) */}
+                      <div className="space-y-2">
+                        <Label className="text-xs">BOQ Line Item (optional)</Label>
+                        <Popover
+                          open={boqPickerOpen === index}
+                          onOpenChange={(open) => setBoqPickerOpen(open ? index : null)}
+                        >
+                          <PopoverTrigger asChild>
+                            <Button variant="outline" role="combobox" className="w-full justify-between font-normal">
+                              <span className="truncate text-left">
+                                {boqLineItemOptions.find((o) => o.id === item.boq_line_item_id)?.label || 'Link to a BOQ line item…'}
+                              </span>
+                              <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-[calc(100vw-6rem)] sm:w-[400px] p-0">
+                            <Command>
+                              <CommandInput placeholder="Search BOQ line items..." />
+                              <CommandList>
+                                <CommandEmpty>No line item found.</CommandEmpty>
+                                <CommandGroup className="max-h-[220px] overflow-y-auto">
+                                  {item.boq_line_item_id && (
+                                    <CommandItem
+                                      value="__clear__"
+                                      onSelect={() => {
+                                        updateLineItem(index, 'boq_line_item_id', '')
+                                        setBoqPickerOpen(null)
+                                      }}
+                                    >
+                                      <span className="text-slate-500">Clear link</span>
+                                    </CommandItem>
+                                  )}
+                                  {boqLineItemOptions.map((o) => (
+                                    <CommandItem
+                                      key={o.id}
+                                      value={o.label}
+                                      onSelect={() => {
+                                        updateLineItem(index, 'boq_line_item_id', o.id)
+                                        setBoqPickerOpen(null)
+                                      }}
+                                    >
+                                      <Check className={cn('mr-2 h-4 w-4 shrink-0', item.boq_line_item_id === o.id ? 'opacity-100' : 'opacity-0')} />
+                                      <span className="flex-1 text-sm">{o.label}</span>
                                     </CommandItem>
                                   ))}
                                 </CommandGroup>

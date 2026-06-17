@@ -39,6 +39,8 @@ import {
   KeyRound,
   Briefcase,
   ShieldCheck,
+  ClipboardList,
+  Gauge,
 } from 'lucide-react'
 import { clearSession, getSession, hasModuleAccess, isAdmin, isSuperuser, type Session } from '@/lib/auth'
 import type { ModuleKey } from '@/lib/modules'
@@ -56,6 +58,8 @@ const navigation: NavItem[] = [
   { name: 'Sites', href: '/sites', icon: Building2, moduleKey: 'sites' },
   { name: 'BOQ Management', href: '/boq', icon: FileSpreadsheet, moduleKey: 'boq' },
   { name: 'BOQ Progress', href: '/boq-progress', icon: TrendingUp, moduleKey: 'boq-progress' },
+  { name: 'BOQ Item Compliance', href: '/boq-item-compliance', icon: ClipboardList, moduleKey: 'boq-item-compliance' },
+  { name: 'BOQ Item Overview', href: '/boq-item-overview', icon: Gauge, moduleKey: 'boq-item-overview' },
   { name: 'RA Billing', href: '/ra-billing', icon: IndianRupee, moduleKey: 'ra-billing' },
   { name: 'Workstations', href: '/workstations', icon: Wrench, moduleKey: 'workstations' },
   { name: 'Material GRN', href: '/material-grn', icon: Receipt, moduleKey: 'material-grn' },
