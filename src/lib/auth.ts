@@ -75,14 +75,17 @@ export async function lookupTenantName(companyCode: string): Promise<string | nu
 }
 
 /**
- * Log in by matching (companyCode, password) against tenant_users. The password
- * identifies the user — each user in a tenant has a unique bcrypt hash. We fetch
- * all active users for the tenant and bcrypt.compare the typed password against
- * each. N is small (a handful of users per tenant), so this is fine.
+ * Log in with (companyCode, username, password). The company code resolves the
+ * tenant; the username picks the user within that tenant (case-insensitive,
+ * unique per tenant); the password is then bcrypt-checked against that user.
+ * Usernames are compared in JS rather than with `ilike`, because `_` and `%` are
+ * LIKE wildcards and usernames may contain them.
  */
-export async function login(companyCode: string, password: string): Promise<Session> {
+export async function login(companyCode: string, username: string, password: string): Promise<Session> {
   const code = companyCode.trim()
+  const uname = username.trim()
   if (!code) throw new Error('Company code is required')
+  if (!uname) throw new Error('Username is required')
   if (!password) throw new Error('Password is required')
 
   const { data: tenant, error: tenantErr } = await supabase
@@ -99,9 +102,16 @@ export async function login(companyCode: string, password: string): Promise<Sess
     .eq('tenant_id', tenant.id)
     .eq('is_active', true)
   if (usersErr) throw new Error('Could not reach server')
-  if (!users || users.length === 0) throw new Error('Invalid credentials')
 
-  for (const u of users) {
+  // The DB's UNIQUE (tenant_id, username) is case-sensitive, so in theory "Admin"
+  // and "admin" could both exist; try an exact-case match first.
+  const lower = uname.toLowerCase()
+  const candidates = (users || [])
+    .filter((u) => (u.username || '').toLowerCase() === lower)
+    .sort((a, b) => Number(b.username === uname) - Number(a.username === uname))
+  if (candidates.length === 0) throw new Error('Invalid username or password')
+
+  for (const u of candidates) {
     if (!u.password_hash) continue
     const ok = await bcrypt.compare(password, u.password_hash)
     if (ok) {
@@ -120,7 +130,7 @@ export async function login(companyCode: string, password: string): Promise<Sess
       return session
     }
   }
-  throw new Error('Invalid credentials')
+  throw new Error('Invalid username or password')
 }
 
 export async function hashPassword(plain: string): Promise<string> {

@@ -14,6 +14,7 @@ import { LandingBackdrop } from '@/lib/landing-backdrop'
 export default function LoginPage() {
   const router = useRouter()
   const [companyCode, setCompanyCode] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [tenantName, setTenantName] = useState<string | null>(null)
   const [tenantLookupState, setTenantLookupState] = useState<'idle' | 'looking' | 'found' | 'unknown'>('idle')
@@ -51,7 +52,7 @@ export default function LoginPage() {
     setError(null)
     setSubmitting(true)
     try {
-      await login(companyCode, password)
+      await login(companyCode, username, password)
       toast.success('Welcome')
       router.replace('/')
     } catch (err: any) {
@@ -81,7 +82,7 @@ export default function LoginPage() {
             <div>
               <h2 className="text-lg font-semibold text-slate-900">Sign in to your company</h2>
               <p className="mt-1 text-sm text-slate-500">
-                Enter your company code and password to continue.
+                Enter your company code, username and password.
               </p>
             </div>
 
@@ -116,6 +117,21 @@ export default function LoginPage() {
                     </span>
                   )}
                 </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="username">Username</Label>
+                <Input
+                  id="username"
+                  placeholder="e.g. admin"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  autoComplete="username"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  required
+                />
               </div>
 
               <div className="space-y-2">
