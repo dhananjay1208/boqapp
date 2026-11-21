@@ -97,7 +97,7 @@ app/
 - **`sites.tenant_id`** — the only tenant-scoping column. Every existing site was backfilled to the Cogneta tenant. **`master_materials`, `material_compliance_documents`, and other master tables are shared across tenants.**
 
 ### Login flow
-- 2 fields: **Company Code** + **Password**. Password identifies the user — `login()` in `src/lib/auth.ts` fetches every active user in the tenant and bcrypt-compares against each. There's no separate username field at login.
+- 3 fields: **Company Code** + **Username** + **Password**. `login(companyCode, username, password)` in `src/lib/auth.ts` resolves the tenant by company code (case-insensitive), picks the active user in that tenant whose `username` matches case-insensitively (compared in JS, not `ilike`, since `_`/`%` are LIKE wildcards), then bcrypt-compares the password against that user only. Failure message is a generic "Invalid username or password". (Before this, login was code + password only and the password identified the user, which broke when two users in a tenant shared a password.)
 - Session is stored in `localStorage` under `boqm.session` with a 24-hour expiry. Contains `{ tenant_id, tenant_code, tenant_name, user_id, username, role, allowed_modules, expires_at }`.
 - `AuthGate` (`src/components/auth/auth-gate.tsx`) wraps every page (via `app/layout.tsx`). Redirects to `/login` when no session; renders a friendly access-denied card when the user lacks the module's key in their `allowed_modules` (or the required role for `/admin/*`).
 
